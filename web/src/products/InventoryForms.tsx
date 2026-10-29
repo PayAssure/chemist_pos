@@ -11,6 +11,7 @@ type InventoryFormsProps = {
   onUpdateProduct: (event: FormEvent<HTMLFormElement>, productId: number) => Promise<boolean>;
   onUpdateBuyingPrice: (productId: number, buyingPriceCents: number) => Promise<boolean>;
   onUpdateBatchExpiry: (batchId: number, expiryDate: string) => Promise<boolean>;
+  onAddStock: (batch: Batch, incomingStock: number) => Promise<boolean>;
   modal: "product" | "selected-product" | null;
   onClose: () => void;
 };
@@ -21,12 +22,13 @@ type ProductEditFormProps = {
   onClose: () => void;
 };
 
-function editModeFromPath(pathname: string): "details" | "buying-price" | "expiry-date" | null {
+function editModeFromPath(pathname: string): "details" | "buying-price" | "expiry-date" | "add-stock" | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] !== "product") return null;
   if (segments[2] === "edit") return "details";
   if (segments[2] === "buying-price") return "buying-price";
   if (segments[2] === "batch" && segments[4] === "expiry") return "expiry-date";
+  if (segments[2] === "batch" && segments[4] === "stock") return "add-stock";
   return null;
 }
 
@@ -91,11 +93,12 @@ function InventoryForms({
   onUpdateProduct,
   onUpdateBuyingPrice,
   onUpdateBatchExpiry,
+  onAddStock,
   modal,
   onClose,
 }: InventoryFormsProps) {
   const [productEditMode, setProductEditMode] = useState<
-    "details" | "buying-price" | "expiry-date" | null
+    "details" | "buying-price" | "expiry-date" | "add-stock" | null
   >(() => editModeFromPath(window.location.pathname));
   useEffect(() => {
     if (!modal) return;
@@ -117,12 +120,14 @@ function InventoryForms({
     return () => window.removeEventListener("popstate", syncEditMode);
   }, []);
 
-  function changeEditMode(mode: "details" | "buying-price" | "expiry-date" | null) {
+  function changeEditMode(mode: "details" | "buying-price" | "expiry-date" | "add-stock" | null) {
     if (!selectedProduct) return;
     const path = mode === "details"
       ? `/product/${selectedProduct.id}/edit`
       : mode === "buying-price"
         ? `/product/${selectedProduct.id}/buying-price`
+        : mode === "add-stock" && selectedBatch
+          ? `/product/${selectedProduct.id}/batch/${selectedBatch.id}/stock`
         : mode === "expiry-date" && selectedBatch
           ? `/product/${selectedProduct.id}/batch/${selectedBatch.id}/expiry`
           : productPath(selectedProduct.id, selectedBatch?.id ?? null);
@@ -147,11 +152,19 @@ function InventoryForms({
     if (selectedBatch && await onUpdateBatchExpiry(selectedBatch.id, expiryDate)) onClose();
   }
 
+  async function submitAddStock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const incomingStock = Number(form.get("incomingStock"));
+    if (selectedBatch && await onAddStock(selectedBatch, incomingStock)) onClose();
+  }
+
   if (!modal) return null;
   if (modal === "selected-product" && !selectedProduct) return null;
   const editingProductDetails = modal === "selected-product" && productEditMode === "details";
   const editingBuyingPrice = modal === "selected-product" && productEditMode === "buying-price";
   const editingExpiryDate = modal === "selected-product" && productEditMode === "expiry-date";
+  const addingStock = modal === "selected-product" && productEditMode === "add-stock";
 
   return (
     <div
@@ -180,7 +193,9 @@ function InventoryForms({
                         ? "Edit buying price"
                         : editingExpiryDate
                           ? "Edit expiry date"
-                        : selectedProduct?.preferredName || selectedProduct?.name || "Product details"
+                          : addingStock
+                            ? "Add stock"
+                          : selectedProduct?.preferredName || selectedProduct?.name || "Product details"
                     : ""}
               </h2>
               <p>
@@ -193,7 +208,9 @@ function InventoryForms({
                         ? "Update the supplier cost used in future sales reports."
                         : editingExpiryDate
                           ? `Update expiry date for batch ${selectedBatch?.batchCode ?? ""}.`
-                        : "Review this medicine or choose what you would like to edit."
+                          : addingStock
+                            ? `Receive incoming stock into batch ${selectedBatch?.batchCode ?? ""}.`
+                          : "Review this medicine or choose what you would like to edit."
                     : ""}
               </p>
             </div>
@@ -308,6 +325,31 @@ function InventoryForms({
                 <button className="button button-primary" type="submit">Save expiry date</button>
               </div>
             </form>
+          ) : addingStock && selectedBatch ? (
+            <form className="form-panel batch-form" onSubmit={submitAddStock}>
+              <p className="helper-text">
+                Current batch stock: {selectedBatch.stockCount}. The incoming quantity will be added to this amount.
+              </p>
+              <label>
+                Incoming stock (selling units)
+                <input
+                  name="incomingStock"
+                  required
+                  type="number"
+                  min="1"
+                  max={Math.min(
+                    2147483647 - selectedBatch.stockCount,
+                    2147483647 - selectedProduct.stockCount,
+                  )}
+                  step="1"
+                  autoFocus
+                />
+              </label>
+              <div className="modal-actions">
+                <button className="button button-quiet" type="button" onClick={() => changeEditMode(null)}>Back</button>
+                <button className="button button-primary" type="submit">Add stock</button>
+              </div>
+            </form>
           ) : (
             <div className="form-panel product-overview">
               <dl className="product-overview-fields">
@@ -321,8 +363,14 @@ function InventoryForms({
                 {selectedBatch && (
                   <div><dt>Batch expiry ({selectedBatch.batchCode})</dt><dd>{selectedBatch.expiryDate ?? "Not set"}</dd></div>
                 )}
+                {selectedBatch && (
+                  <div><dt>Batch stock ({selectedBatch.batchCode})</dt><dd>{selectedBatch.stockCount}</dd></div>
+                )}
               </dl>
               <div className="modal-actions">
+                {selectedBatch && (
+                  <button className="button button-primary" type="button" onClick={() => changeEditMode("add-stock")}>Add stock</button>
+                )}
                 {selectedBatch && (
                   <button className="button button-secondary" type="button" onClick={() => changeEditMode("expiry-date")}>Edit expiry date</button>
                 )}

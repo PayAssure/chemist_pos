@@ -7,7 +7,6 @@ type InventoryTableProps = {
   batches: Batch[];
   search: string;
   sortOrder: "expiry-asc" | "expiry-desc" | "stock-asc" | "stock-desc";
-  onUpdateStock: (batch: Batch, change: number) => void;
   onSelectProduct: (product: Product, batch: Batch | null) => void;
 };
 
@@ -30,7 +29,6 @@ function InventoryTable({
   batches,
   search,
   sortOrder,
-  onUpdateStock,
   onSelectProduct,
 }: InventoryTableProps) {
   const query = search.trim().toLocaleLowerCase();
@@ -154,10 +152,8 @@ function InventoryTable({
                         </small>
                       </td>
                       <td>
-                        <div className="stock-stepper">
-                          <button aria-label={`Decrease ${batch.batchCode} stock`} disabled={batch.stockCount === 0} onClick={() => onUpdateStock(batch, -1)}>−</button>
+                        <div className="stock-summary">
                           <strong>{batch.stockCount}</strong>
-                          <button aria-label={`Increase ${batch.batchCode} stock`} onClick={() => onUpdateStock(batch, 1)}>+</button>
                           {product.saleableCount === 0
                             ? <span className="stock-status stock-status-empty">Out of stock</span>
                             : product.saleableCount <= product.reorderLevel
@@ -192,7 +188,7 @@ function InventoryTable({
                     </td>
                     <td>No batch entered</td>
                     <td>
-                      <div className="stock-stepper">
+                      <div className="stock-summary">
                         <strong>{product.stockCount}</strong>
                         {product.saleableCount === 0
                           ? <span className="stock-status stock-status-empty">Out of stock</span>

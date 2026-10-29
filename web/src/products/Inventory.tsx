@@ -33,7 +33,7 @@ type InventoryProps = {
   onUpdateProduct: (event: FormEvent<HTMLFormElement>, productId: number) => Promise<boolean>;
   onUpdateBuyingPrice: (productId: number, buyingPriceCents: number) => Promise<boolean>;
   onUpdateBatchExpiry: (batchId: number, expiryDate: string) => Promise<boolean>;
-  onUpdateStock: (batch: Batch, change: number) => void;
+  onAddStock: (batch: Batch, incomingStock: number) => Promise<boolean>;
 };
 
 function Inventory(props: InventoryProps) {
@@ -94,7 +94,6 @@ function Inventory(props: InventoryProps) {
           batches={props.batches}
           search={search}
           sortOrder={sortOrder}
-          onUpdateStock={props.onUpdateStock}
           onSelectProduct={(product, batch) => {
             navigate(batch
               ? `/product/${product.id}/batch/${batch.id}`
@@ -110,6 +109,7 @@ function Inventory(props: InventoryProps) {
         onUpdateProduct={props.onUpdateProduct}
         onUpdateBuyingPrice={props.onUpdateBuyingPrice}
         onUpdateBatchExpiry={props.onUpdateBatchExpiry}
+        onAddStock={props.onAddStock}
         modal={route.modal}
         onClose={() => navigate("/product")}
       />

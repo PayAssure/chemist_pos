@@ -127,19 +127,27 @@ export function useInventoryActions(
     }
   }
 
-  async function updateStock(batch: Batch, change: number) {
-    const stockCount = batch.stockCount + change;
-    if (stockCount < 0) return;
+  async function addStock(batch: Batch, incomingStock: number): Promise<boolean> {
     setError("");
     try {
       await api(`/api/batches/${batch.id}/stock`, {
-        method: "PATCH",
-        body: JSON.stringify({ stockCount }),
+        method: "POST",
+        body: JSON.stringify({ incomingStock }),
       });
-      setNotice("Stock updated.");
-      await refreshData();
+      setNotice(`Added ${incomingStock} units to stock.`);
+      try {
+        await refreshData();
+      } catch (reason) {
+        setError(
+          `Stock was added, but inventory could not be refreshed: ${
+            reason instanceof Error ? reason.message : "Could not load POS data"
+          }`,
+        );
+      }
+      return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not update inventory");
+      setError(reason instanceof Error ? reason.message : "Could not add stock");
+      return false;
     }
   }
 
@@ -159,5 +167,5 @@ export function useInventoryActions(
     }
   }
 
-  return { saveSupplier, saveProduct, updateProduct, updateBuyingPrice, updateStock, updateBatchExpiry };
+  return { saveSupplier, saveProduct, updateProduct, updateBuyingPrice, addStock, updateBatchExpiry };
 }

@@ -10,6 +10,7 @@ import SalesHistory from "./sales/SalesHistory";
 import { api } from "./lib/api";
 import { money } from "./lib/money";
 import { navigate, pathForTab, tabFromPath } from "./lib/navigation";
+import ContactSupport from "./support/ContactSupport";
 import type {
   Batch,
   DashboardData,
@@ -151,7 +152,7 @@ function App() {
   const prescriptionRequired = cartItems.some(
     ({ product }) => product.prescriptionRequired,
   );
-  const { saveSupplier, saveProduct, updateProduct, updateBuyingPrice, updateStock, updateBatchExpiry } =
+  const { saveSupplier, saveProduct, updateProduct, updateBuyingPrice, addStock, updateBatchExpiry } =
     useInventoryActions(refreshData, setError, setNotice);
 
   function dismissToast() {
@@ -239,7 +240,7 @@ function App() {
           <span>Zion Chemist <strong>POS</strong></span>
         </a>
         <nav className="header-nav" aria-label="POS sections">
-          {(["dashboard", "checkout", "products", "suppliers", "payassure-data", "history"] as Tab[]).map((name) => (
+          {(["dashboard", "checkout", "products", "suppliers", "payassure-data", "history", "support"] as Tab[]).map((name) => (
             <button
               key={name}
               className={`tab ${tab === name ? "active" : ""}`}
@@ -258,7 +259,9 @@ function App() {
                     ? "Suppliers"
                     : name === "payassure-data"
                       ? "PayAssure data"
-                    : "Sales history"}
+                      : name === "history"
+                        ? "Sales history"
+                        : "Contact support"}
             </button>
           ))}
         </nav>
@@ -312,7 +315,7 @@ function App() {
             onUpdateProduct={updateProduct}
             onUpdateBuyingPrice={updateBuyingPrice}
             onUpdateBatchExpiry={updateBatchExpiry}
-            onUpdateStock={updateStock}
+            onAddStock={addStock}
           />
         )}
         {tab === "suppliers" && (
@@ -326,6 +329,7 @@ function App() {
           />
         )}
         {tab === "history" && <SalesHistory sales={sales} />}
+        {tab === "support" && <ContactSupport />}
       </main>
     </div>
   );

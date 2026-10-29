@@ -7,6 +7,7 @@ const tabPaths: Record<Tab, string> = {
   suppliers: "/suppliers",
   "payassure-data": "/payassure-data",
   history: "/sales-history",
+  support: "/contact-support",
 };
 
 export function navigate(path: string) {
@@ -21,6 +22,7 @@ export function tabFromPath(path: string): Tab {
   if (firstSegment === "suppliers") return "suppliers";
   if (firstSegment === "payassure-data") return "payassure-data";
   if (firstSegment === "sales-history") return "history";
+  if (firstSegment === "contact-support") return "support";
   return "dashboard";
 }
 

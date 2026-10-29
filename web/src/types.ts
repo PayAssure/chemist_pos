@@ -96,7 +96,7 @@ export type DashboardData = {
   transactions: DashboardTransaction[];
 };
 
-export type Tab = "dashboard" | "checkout" | "products" | "suppliers" | "payassure-data" | "history";
+export type Tab = "dashboard" | "checkout" | "products" | "suppliers" | "payassure-data" | "history" | "support";
 
 export type CartItem = { product: Product; quantity: number };
 
