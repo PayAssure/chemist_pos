@@ -15,6 +15,13 @@ import {
   PaymentIntegrationNotConfiguredError,
   startMpesaCheckout,
 } from "./payment";
+import {
+  getPayassureParticipant,
+  isPayassureConfigured,
+  PayassureHttpError,
+  refreshPayassureSession,
+  updatePayassureParticipant,
+} from "./payassure";
 
 const app = express();
 const PgSession = connectPgSimple(session);
@@ -159,6 +166,82 @@ const checkoutSchema = z.object({
     }
   }
 });
+const payassurePaymentUpdateSchema = z.object({
+  type: z.enum(["BANK", "MPESA"]).optional(),
+  accountName: z.string().trim().max(120).optional(),
+  phoneNumber: z.string().trim().max(30).optional(),
+  bankCode: z.string().trim().max(30).optional(),
+  accountNumber: z.string().trim().max(80).optional(),
+  shortcode: z.string().trim().max(30).optional(),
+  provider: z.string().trim().max(120).optional(),
+}).strict().refine((payment) => Object.keys(payment).length > 0);
+const payassureParticipantUpdateSchema = z.object({
+  businessName: z.string().trim().min(1).max(200).optional(),
+  registrationNumber: z.string().trim().max(120).optional(),
+  kraPin: z.string().trim().max(80).optional(),
+  businessType: z.string().trim().max(120).optional(),
+  industry: z.string().trim().max(120).optional(),
+  physicalAddress: z.string().trim().max(300).optional(),
+  contactName: z.string().trim().max(120).optional(),
+  email: z.string().email().max(254).optional(),
+  phoneNumber: z.string().trim().max(30).optional(),
+  settlementMethod: z.string().trim().max(40).optional(),
+  settlementAccount: z.string().trim().max(120).optional(),
+  payment: payassurePaymentUpdateSchema.optional(),
+}).strict().refine((participant) => Object.keys(participant).length > 0);
+
+function safePayassureParticipant(value: unknown): unknown {
+  function sanitize(participantValue: unknown): unknown {
+    if (!participantValue || typeof participantValue !== "object" || Array.isArray(participantValue)) {
+      return participantValue;
+    }
+    const participant = participantValue as Record<string, unknown>;
+    const integrationValue = participant.integration;
+    const integration =
+      integrationValue && typeof integrationValue === "object"
+        ? integrationValue as Record<string, unknown>
+        : null;
+    const paymentValue = participant.payment;
+    const payment =
+      paymentValue && typeof paymentValue === "object"
+        ? paymentValue as Record<string, unknown>
+        : null;
+    return {
+      id: participant.id,
+      participantType: participant.participantType,
+      businessName: participant.businessName,
+      businessType: participant.businessType,
+      contactName: participant.contactName,
+      email: participant.email,
+      status: participant.status,
+      createdAt: participant.createdAt,
+      updatedAt: participant.updatedAt,
+      integration: integration
+        ? {
+            id: integration.id,
+            merchantId: integration.merchantId,
+            environment: integration.environment,
+            isActive: integration.isActive,
+            createdAt: integration.createdAt,
+          }
+        : null,
+      payment: payment
+        ? {
+            type: payment.type,
+            accountName: payment.accountName,
+            status: payment.status,
+            isVerified: payment.isVerified,
+            provider: payment.provider,
+            bankCode: payment.bankCode,
+            accountNumber: payment.accountNumber,
+            shortcode: payment.shortcode,
+            phoneNumber: payment.phoneNumber,
+          }
+        : null,
+    };
+  }
+  return Array.isArray(value) ? value.map(sanitize) : sanitize(value);
+}
 
 app.get("/api/health", async (_req, res) => {
   try {
@@ -191,6 +274,18 @@ app.post("/api/auth/login", loginLimiter, async (req, res, next) => {
       return;
     }
 
+    let payassureError: string | null = null;
+    if (isPayassureConfigured()) {
+      try {
+        await refreshPayassureSession();
+      } catch (integrationError) {
+        payassureError =
+          integrationError instanceof Error
+            ? integrationError.message
+            : "Could not connect to PayAssure";
+      }
+    }
+
     req.session.regenerate((error) => {
       if (error) {
         next(error);
@@ -203,7 +298,10 @@ app.post("/api/auth/login", loginLimiter, async (req, res, next) => {
           next(saveError);
           return;
         }
-        res.json({ email: user.email });
+        res.json({
+          email: user.email,
+          ...(payassureError ? { payassureError } : {}),
+        });
       });
     });
   } catch (error) {
@@ -224,6 +322,35 @@ app.post("/api/auth/logout", requireAuth, (req, res, next) => {
 
 app.get("/api/auth/me", requireAuth, (req, res) => {
   res.json({ email: req.session.email });
+});
+
+app.get("/api/payassure/me", requireAuth, async (_req, res) => {
+  try {
+    const participant = await getPayassureParticipant();
+    res.json(safePayassureParticipant(participant));
+  } catch (error) {
+    res.status(isPayassureConfigured() ? 502 : 503).json({
+      error: error instanceof Error ? error.message : "Could not load PayAssure participant",
+    });
+  }
+});
+
+app.patch("/api/payassure/me", requireAuth, async (req, res) => {
+  const parsed = payassureParticipantUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Provide valid PayAssure participant fields to update" });
+    return;
+  }
+  try {
+    const participant = await updatePayassureParticipant(parsed.data);
+    res.json(safePayassureParticipant(participant));
+  } catch (error) {
+    const upstreamClientError =
+      error instanceof PayassureHttpError && [400, 403, 404].includes(error.status);
+    res.status(upstreamClientError ? error.status : isPayassureConfigured() ? 502 : 503).json({
+      error: error instanceof Error ? error.message : "Could not update PayAssure participant",
+    });
+  }
 });
 
 app.get("/api/suppliers", requireAuth, async (_req, res, next) => {

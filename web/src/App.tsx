@@ -14,6 +14,8 @@ import ContactSupport from "./support/ContactSupport";
 import type {
   Batch,
   DashboardData,
+  PayassureParticipant,
+  PayassureParticipantUpdate,
   Product,
   RetailerProfileData,
   Sale,
@@ -26,23 +28,54 @@ function emptyRetailerProfile(email: string): RetailerProfileData {
     id: "",
     participantType: "RETAILER",
     businessName: "",
-    registrationNumber: "",
-    kraPin: "",
     businessType: "",
-    industry: "",
-    physicalAddress: "",
     contactName: "",
     email,
-    phoneNumber: "",
-    settlementMethod: "",
-    settlementAccount: "",
-    posSystem: "",
-    settlementPreference: "",
     status: "DRAFT",
     createdAt: "",
     updatedAt: "",
     integration: null,
     payment: null,
+  };
+}
+
+function mapPayassureParticipant(
+  participant: PayassureParticipant,
+  fallbackEmail: string,
+): RetailerProfileData {
+  return {
+    ...emptyRetailerProfile(fallbackEmail),
+    id: participant.id ?? "",
+    participantType: participant.participantType === "SUPPLIER" ? "SUPPLIER" : "RETAILER",
+    businessName: participant.businessName ?? "",
+    businessType: participant.businessType ?? "",
+    contactName: participant.contactName ?? "",
+    email: participant.email ?? fallbackEmail,
+    status: participant.status ?? "DRAFT",
+    createdAt: participant.createdAt ?? "",
+    updatedAt: participant.updatedAt ?? "",
+    integration: participant.integration
+      ? {
+          id: participant.integration.id ?? "",
+          merchantId: participant.integration.merchantId ?? "",
+          environment: participant.integration.environment ?? "",
+          isActive: participant.integration.isActive ?? false,
+          createdAt: participant.integration.createdAt ?? "",
+        }
+      : null,
+    payment: participant.payment
+      ? {
+          type: participant.payment.type === "BANK" ? "BANK" : "MPESA",
+          accountName: participant.payment.accountName ?? "",
+          phoneNumber: participant.payment.phoneNumber ?? "",
+          bankCode: participant.payment.bankCode ?? "",
+          accountNumber: participant.payment.accountNumber ?? "",
+          shortcode: participant.payment.shortcode ?? "",
+          provider: participant.payment.provider ?? "",
+          status: participant.payment.status ?? "",
+          isVerified: participant.payment.isVerified ?? false,
+        }
+      : null,
   };
 }
 
@@ -84,6 +117,7 @@ function App() {
   const [retailerProfile, setRetailerProfile] = useState<RetailerProfileData>(
     () => emptyRetailerProfile(""),
   );
+  const [payassureLoading, setPayassureLoading] = useState(false);
 
   useEffect(() => {
     if (!error && !notice) return;
@@ -131,6 +165,29 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!email) return;
+    let active = true;
+    setPayassureLoading(true);
+    api<PayassureParticipant | PayassureParticipant[]>("/api/payassure/me")
+      .then((response) => {
+        const participant = Array.isArray(response) ? response[0] : response;
+        if (!participant) throw new Error("PayAssure returned no participant data");
+        if (active) setRetailerProfile(mapPayassureParticipant(participant, email));
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setError(reason instanceof Error ? reason.message : "Could not load PayAssure data");
+        }
+      })
+      .finally(() => {
+        if (active) setPayassureLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [email]);
+
+  useEffect(() => {
     if (email) {
       refreshData().catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : "Could not load POS data"),
@@ -168,6 +225,28 @@ function App() {
       setNotice("You have been signed out.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not sign out");
+    }
+  }
+
+  async function savePayassureParticipant(
+    update: PayassureParticipantUpdate,
+  ): Promise<RetailerProfileData> {
+    setError("");
+    setNotice("");
+    try {
+      const response = await api<PayassureParticipant | PayassureParticipant[]>(
+        "/api/payassure/me",
+        { method: "PATCH", body: JSON.stringify(update) },
+      );
+      const participant = Array.isArray(response) ? response[0] : response;
+      if (!participant) throw new Error("PayAssure returned no updated participant data");
+      const updatedProfile = mapPayassureParticipant(participant, email ?? "");
+      setRetailerProfile(updatedProfile);
+      setNotice("PayAssure participant updated.");
+      return updatedProfile;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update PayAssure participant");
+      throw reason;
     }
   }
 
@@ -324,8 +403,8 @@ function App() {
         {tab === "payassure-data" && (
           <PayassureData
             profile={retailerProfile}
-            onChange={setRetailerProfile}
-            onSaved={() => setNotice("PayAssure data saved for this session.")}
+            loading={payassureLoading}
+            onSave={savePayassureParticipant}
           />
         )}
         {tab === "history" && <SalesHistory sales={sales} />}

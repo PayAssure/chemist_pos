@@ -8,6 +8,7 @@ A lightweight pharmacy point of sale for private staff accounts. It provides med
 - PostgreSQL
 
 Set `DATABASE_URL` and a random `SESSION_SECRET` (at least 32 characters) in `.env`.
+To enable PayAssure participant data, also set `PAYASSURE_API_BASE_URL`, `PAYASSURE_IDENTIFIER`, and `PAYASSURE_PASSWORD`. The server signs in or rotates its refresh token at POS login, stores both tokens encrypted with `SESSION_SECRET`, and proxies the authenticated participant request; API keys and secrets are never returned to the browser.
 
 ```sh
 npm install

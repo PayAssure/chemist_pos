@@ -15,7 +15,7 @@ function Login({ onLogin, onError }: LoginProps) {
     onError("");
     const form = new FormData(event.currentTarget);
     try {
-      const user = await api<{ email: string }>("/api/auth/login", {
+      const user = await api<{ email: string; payassureError?: string }>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({
           email: form.get("email"),
@@ -23,6 +23,7 @@ function Login({ onLogin, onError }: LoginProps) {
         }),
       });
       onLogin(user.email);
+      if (user.payassureError) onError(`PayAssure sign-in failed: ${user.payassureError}`);
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : "Could not sign in");
     } finally {

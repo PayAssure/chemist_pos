@@ -100,6 +100,36 @@ export type Tab = "dashboard" | "checkout" | "products" | "suppliers" | "payassu
 
 export type CartItem = { product: Product; quantity: number };
 
+export type PayassureParticipant = {
+  id?: string;
+  participantType?: string;
+  businessName?: string;
+  businessType?: string;
+  contactName?: string;
+  email?: string;
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  integration?: {
+    id?: string | null;
+    merchantId?: string | null;
+    environment?: string | null;
+    isActive?: boolean | null;
+    createdAt?: string | null;
+  } | null;
+  payment?: {
+    type?: string | null;
+    accountName?: string | null;
+    phoneNumber?: string | null;
+    bankCode?: string | null;
+    accountNumber?: string | null;
+    shortcode?: string | null;
+    provider?: string | null;
+    status?: string | null;
+    isVerified?: boolean | null;
+  } | null;
+};
+
 export type RetailerPaymentData = {
   type: "MPESA" | "BANK";
   accountName: string;
@@ -122,23 +152,25 @@ export type RetailerIntegrationData = {
 
 export type RetailerProfileData = {
   id: string;
-  participantType: "RETAILER";
+  participantType: string;
   businessName: string;
-  registrationNumber: string;
-  kraPin: string;
   businessType: string;
-  industry: string;
-  physicalAddress: string;
   contactName: string;
   email: string;
-  phoneNumber: string;
-  settlementMethod: string;
-  settlementAccount: string;
-  posSystem: string;
-  settlementPreference: string;
   status: string;
   createdAt: string;
   updatedAt: string;
   integration: RetailerIntegrationData | null;
   payment: RetailerPaymentData | null;
+};
+
+export type PayassureParticipantUpdate = Partial<
+  Pick<RetailerProfileData, "businessName" | "businessType" | "contactName" | "email">
+> & {
+  settlementMethod?: string;
+  settlementAccount?: string;
+  payment?: Partial<Pick<
+    RetailerPaymentData,
+    "type" | "accountName" | "phoneNumber" | "bankCode" | "accountNumber" | "shortcode" | "provider"
+  >>;
 };

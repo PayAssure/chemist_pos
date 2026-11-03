@@ -173,6 +173,7 @@ h1 { font-size: 38px; font-weight: 800; letter-spacing: -.04em; margin-bottom: 5
 .terms-list p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
 .support-modal { width: min(100%, 560px); max-height: min(90vh, 800px); overflow-y: auto; box-shadow: 0 24px 80px rgb(0 0 0 / 24%); }
 .support-modal .modal-heading { margin-bottom: 4px; }
+.retailer-edit-modal { width: min(100%, 720px); max-height: min(90vh, 820px); overflow-y: auto; box-shadow: 0 24px 80px rgb(0 0 0 / 24%); }
 .modal-backdrop {
   position: fixed; z-index: 20; inset: 0; display: grid; place-items: center;
   padding: 24px; background: rgb(16 28 22 / 55%); overflow-y: auto;
@@ -194,7 +195,7 @@ h1 { font-size: 38px; font-weight: 800; letter-spacing: -.04em; margin-bottom: 5
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 .modal-actions .button { align-self: auto; }
 .supplier-search { max-width: 560px; margin-bottom: 20px; }
-.retailer-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 18px; align-items: start; }
+.retailer-cards { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: stretch; }
 .retailer-card { min-width: 0; }
 .retailer-card-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 20px; }
 .retailer-card-heading h2 { font-size: 20px; font-weight: 800; margin: 0 0 5px; }
@@ -203,10 +204,12 @@ h1 { font-size: 38px; font-weight: 800; letter-spacing: -.04em; margin-bottom: 5
 .retailer-card-actions .button { min-height: 38px; padding: 0 12px; font-size: 13px; }
 .retailer-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; margin: 0; }
 .retailer-field { min-width: 0; padding: 12px 0; border-top: 1px solid #f0f2f1; }
-.retailer-field dt { color: var(--muted); font-size: 13px; font-weight: 600; margin-bottom: 5px; }
-.retailer-field dd { margin: 0; color: #18251f; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.retailer-field dt { color: #68766f; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+.retailer-field dd { margin: 0; color: var(--green-dark); font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .retailer-field input { font-weight: 500; }
-.retailer-fields-edit { gap: 14px 18px; }
+.retailer-edit-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+.retailer-edit-fields label { min-width: 0; }
+.retailer-edit-fieldset { display: flex; min-width: 0; flex-direction: column; gap: 14px; margin: 0; padding: 0; border: 0; }
 .retailer-empty { color: var(--muted); font-size: 15px; margin: 0; padding: 10px 0; }
 .table-wrap { width: 100%; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; -webkit-overflow-scrolling: touch; }
 table { width: 100%; min-width: 680px; border-collapse: collapse; text-align: left; }
@@ -277,6 +280,8 @@ input:focus, select:focus, textarea:focus { border-color: #69a184; box-shadow: 0
   .inventory-actions { flex: 0 0 auto; margin-left: auto; }
   .inventory-actions .button { padding: 0 10px; white-space: nowrap; }
   .retailer-fields { grid-template-columns: 1fr; }
+  .retailer-cards { grid-template-columns: 1fr; }
+  .retailer-edit-fields { grid-template-columns: 1fr; }
   .retailer-card-heading { flex-wrap: wrap; }
   .cart-panel { position: static; }
   .form-grid { grid-template-columns: 1fr; }
@@ -299,6 +304,7 @@ input:focus, select:focus, textarea:focus { border-color: #69a184; box-shadow: 0
   .modal-backdrop { padding: 12px; align-items: start; }
   .inventory-modal { max-height: calc(100svh - 24px); padding: 16px; }
   .support-modal { max-height: calc(100svh - 24px); padding: 16px; }
+  .retailer-edit-modal { max-height: calc(100svh - 24px); padding: 16px; }
   .product-overview-fields { grid-template-columns: 1fr; }
   .main { padding: 24px 12px 40px; }
   .panel-heading { gap: 8px; margin-bottom: 18px; }

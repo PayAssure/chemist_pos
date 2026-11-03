@@ -5,6 +5,16 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS payassure_tokens (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  access_token TEXT,
+  refresh_token TEXT,
+  user_id TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE payassure_tokens ADD COLUMN IF NOT EXISTS user_id TEXT;
+
 CREATE TABLE IF NOT EXISTS suppliers (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
