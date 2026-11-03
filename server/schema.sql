@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS suppliers (
   name TEXT NOT NULL,
   payassure_merchant_id TEXT,
   payassure_enrolled BOOLEAN NOT NULL DEFAULT TRUE,
+  contact_name TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
   CONSTRAINT suppliers_payassure_registration_check CHECK (
     (payassure_enrolled AND payassure_merchant_id IS NOT NULL
       AND length(btrim(payassure_merchant_id)) > 0)
@@ -30,6 +34,10 @@ CREATE TABLE IF NOT EXISTS suppliers (
 
 ALTER TABLE suppliers ALTER COLUMN payassure_merchant_id DROP NOT NULL;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payassure_enrolled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS contact_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';
 ALTER TABLE suppliers DROP CONSTRAINT IF EXISTS suppliers_payassure_merchant_id_check;
 
 DO $$
@@ -183,6 +191,115 @@ ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS batch_expiry_date DATE;
 ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS buying_unit_price_cents INTEGER CHECK (buying_unit_price_cents >= 0);
 ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id);
 ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS supplier_name TEXT;
+
+CREATE TABLE IF NOT EXISTS payassure_settlements (
+  id SERIAL PRIMARY KEY,
+  sale_id INTEGER NOT NULL UNIQUE REFERENCES sales(id) ON DELETE CASCADE,
+  merchant_transaction_reference TEXT NOT NULL UNIQUE,
+  request_fingerprint TEXT NOT NULL,
+  request_payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'processing', 'accepted', 'failed')),
+  collection_status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (collection_status IN ('pending', 'succeeded', 'failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_at TIMESTAMPTZ,
+  last_attempt_at TIMESTAMPTZ,
+  last_error TEXT,
+  provider_request_id TEXT,
+  provider_settlement_id TEXT,
+  last_event_type TEXT,
+  last_event_payload JSONB,
+  last_event_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE payassure_settlements
+  ADD COLUMN IF NOT EXISTS request_fingerprint TEXT;
+ALTER TABLE payassure_settlements
+  ADD COLUMN IF NOT EXISTS collection_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE payassure_settlements
+  ADD COLUMN IF NOT EXISTS provider_settlement_id TEXT;
+ALTER TABLE payassure_settlements
+  ADD COLUMN IF NOT EXISTS last_event_type TEXT;
+ALTER TABLE payassure_settlements
+  ADD COLUMN IF NOT EXISTS last_event_payload JSONB;
+ALTER TABLE payassure_settlements
+  ADD COLUMN IF NOT EXISTS last_event_at TIMESTAMPTZ;
+ALTER TABLE payassure_settlements
+  DROP CONSTRAINT IF EXISTS payassure_settlements_status_check;
+ALTER TABLE payassure_settlements
+  ADD CONSTRAINT payassure_settlements_status_check
+  CHECK (status IN (
+    'queued', 'processing', 'accepted', 'failed', 'retrying', 'partially_failed',
+    'awaiting_reconciliation', 'completed'
+  ));
+ALTER TABLE payassure_settlements
+  DROP CONSTRAINT IF EXISTS payassure_settlements_collection_status_check;
+ALTER TABLE payassure_settlements
+  ADD CONSTRAINT payassure_settlements_collection_status_check
+  CHECK (collection_status IN ('pending', 'succeeded', 'failed'));
+
+UPDATE payassure_settlements settlement
+SET collection_status = CASE
+  WHEN sale.status = 'completed' THEN 'succeeded'
+  WHEN sale.status = 'failed' THEN 'failed'
+  ELSE settlement.collection_status
+END
+FROM sales sale
+WHERE sale.id = settlement.sale_id
+  AND settlement.collection_status = 'pending'
+  AND sale.status IN ('completed', 'failed');
+
+CREATE TABLE IF NOT EXISTS payassure_webhook_events (
+  id SERIAL PRIMARY KEY,
+  recipient_merchant_id TEXT NOT NULL,
+  provider_event_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  delivery_id TEXT,
+  payload JSONB NOT NULL,
+  signature_valid BOOLEAN NOT NULL DEFAULT FALSE,
+  status TEXT NOT NULL DEFAULT 'received'
+    CHECK (status IN ('received', 'processed', 'duplicate', 'rejected')),
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  processed_at TIMESTAMPTZ,
+  error_message TEXT,
+  UNIQUE (recipient_merchant_id, provider_event_id)
+);
+
+ALTER TABLE payassure_webhook_events
+  ADD COLUMN IF NOT EXISTS recipient_merchant_id TEXT;
+ALTER TABLE payassure_webhook_events
+  DROP CONSTRAINT IF EXISTS payassure_webhook_events_provider_event_id_key;
+ALTER TABLE payassure_webhook_events
+  DROP CONSTRAINT IF EXISTS payassure_webhook_events_recipient_merchant_id_provider_event_id_key;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'payassure_webhook_events_recipient_event_unique'
+      AND conrelid = 'payassure_webhook_events'::regclass
+  ) THEN
+    ALTER TABLE payassure_webhook_events
+      ADD CONSTRAINT payassure_webhook_events_recipient_event_unique
+      UNIQUE (recipient_merchant_id, provider_event_id);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS payassure_webhook_events_type_idx
+  ON payassure_webhook_events (event_type, received_at DESC);
+
+CREATE TABLE IF NOT EXISTS payassure_webhook_credentials (
+  recipient_merchant_id TEXT PRIMARY KEY,
+  encrypted_api_secret TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS payassure_settlements_retry_idx
+  ON payassure_settlements (next_attempt_at)
+  WHERE status IN ('queued', 'failed');
 
 CREATE TABLE IF NOT EXISTS failed_checkout_attempts (
   id SERIAL PRIMARY KEY,

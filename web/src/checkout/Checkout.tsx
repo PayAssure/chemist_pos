@@ -14,7 +14,8 @@ type CheckoutProps = {
   onPrescriptionReferenceChange: (value: string) => void;
   onPayerNameChange: (value: string) => void;
   onPayerPhoneChange: (value: string) => void;
-  onCheckout: (paymentMethod: "cash" | "mpesa" | "credit") => void;
+  isCheckingOut: boolean;
+  onCheckout: (paymentMethod: "cash" | "mpesa" | "credit", payerPhone?: string) => Promise<boolean>;
 };
 
 function Checkout({
@@ -29,10 +30,13 @@ function Checkout({
   onPrescriptionReferenceChange,
   onPayerNameChange,
   onPayerPhoneChange,
+  isCheckingOut,
   onCheckout,
 }: CheckoutProps) {
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "credit">("cash");
   const [productSearch, setProductSearch] = useState("");
+  const [mpesaPhone, setMpesaPhone] = useState("");
+  const [mpesaModalOpen, setMpesaModalOpen] = useState(false);
   const creditDetailsMissing =
     !payerName.trim() || payerPhone.replace(/\D/g, "").length < 7;
   const searchTerms = productSearch.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -77,7 +81,7 @@ function Checkout({
               <button
                 className="product-tile"
                 key={product.id}
-                disabled={product.saleableCount === 0}
+                disabled={isCheckingOut || product.saleableCount === 0}
                 onClick={() =>
                   onCartChange((current) => ({
                     ...current,
@@ -110,7 +114,7 @@ function Checkout({
       <aside className="panel cart-panel">
         <div className="panel-heading">
           <div><h2>Current sale</h2><p>{cartItems.length} different items</p></div>
-          <button className="text-button" onClick={() => onCartChange({})}>Clear</button>
+          <button className="text-button" disabled={isCheckingOut} onClick={() => onCartChange({})}>Clear</button>
         </div>
         {cartItems.length === 0 ? (
           <div className="empty cart-empty">Choose a product to begin checkout.</div>
@@ -125,6 +129,7 @@ function Checkout({
                 <div className="quantity">
                   <button
                     aria-label={`Remove one ${product.name}`}
+                    disabled={isCheckingOut}
                     onClick={() =>
                       onCartChange((current) => {
                         const next = { ...current };
@@ -137,7 +142,7 @@ function Checkout({
                   <span>{quantity}</span>
                   <button
                     aria-label={`Add one ${product.name}`}
-                    disabled={quantity >= product.saleableCount}
+                    disabled={isCheckingOut || quantity >= product.saleableCount}
                     onClick={() =>
                       onCartChange((current) => ({ ...current, [product.id]: quantity + 1 }))
                     }
@@ -153,6 +158,7 @@ function Checkout({
             Prescription reference
             <input
               value={prescriptionReference}
+              disabled={isCheckingOut}
               onChange={(event) => onPrescriptionReferenceChange(event.target.value)}
               required
               maxLength={120}
@@ -165,6 +171,7 @@ function Checkout({
           Payment method
           <select
             value={paymentMethod}
+            disabled={isCheckingOut}
             onChange={(event) => {
               const nextMethod = event.target.value === "credit" ? "credit" : "cash";
               setPaymentMethod(nextMethod);
@@ -184,6 +191,7 @@ function Checkout({
               Payer name
               <input
                 value={payerName}
+                disabled={isCheckingOut}
                 onChange={(event) => onPayerNameChange(event.target.value)}
                 required
                 maxLength={120}
@@ -195,6 +203,7 @@ function Checkout({
               <input
                 type="tel"
                 value={payerPhone}
+                disabled={isCheckingOut}
                 onChange={(event) => onPayerPhoneChange(event.target.value)}
                 required
                 minLength={7}
@@ -207,19 +216,66 @@ function Checkout({
         <button
           className="button button-primary pay-button"
           disabled={
+            isCheckingOut ||
             cartItems.length === 0 ||
             (paymentMethod === "credit" && creditDetailsMissing) ||
             (prescriptionRequired && !prescriptionReference.trim())
           }
           onClick={() => onCheckout(paymentMethod)}
-        >{paymentMethod === "credit" ? "Complete sale on credit" : "Complete cash sale"}</button>
+          aria-busy={isCheckingOut}
+        >
+          {isCheckingOut ? <><span className="checkout-spinner" aria-hidden="true" />Waiting for PayAssure…</> : paymentMethod === "credit" ? "Complete sale on credit" : "Complete cash sale"}
+        </button>
         <button
           className="button button-secondary pay-button"
-          disabled={cartItems.length === 0 || (prescriptionRequired && !prescriptionReference.trim())}
-          onClick={() => onCheckout("mpesa")}
-        >M-Pesa · integration pending</button>
-        <p className="helper-text">Credit sales require the payer’s name and phone number. M-Pesa checkout is not enabled until the PayAssure API contract is provided.</p>
+          disabled={isCheckingOut || cartItems.length === 0 || (prescriptionRequired && !prescriptionReference.trim())}
+          onClick={() => setMpesaModalOpen(true)}
+        >{isCheckingOut ? "Waiting for PayAssure…" : "Pay with M-Pesa"}</button>
+        <p className="helper-text">Credit sales require the payer’s name and phone number. All sales are saved only after PayAssure accepts the payment.</p>
       </aside>
+      {mpesaModalOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (!isCheckingOut && event.target === event.currentTarget) setMpesaModalOpen(false);
+        }}>
+          <section className="panel form-panel checkout-mpesa-modal" role="dialog" aria-modal="true" aria-labelledby="mpesa-modal-title">
+            <div className="modal-heading">
+              <div>
+                <h2 id="mpesa-modal-title">M-Pesa payment</h2>
+                <p>Enter the customer’s phone number. The sale is saved only after PayAssure accepts the payment.</p>
+              </div>
+              <button className="modal-close" type="button" aria-label="Close dialog" disabled={isCheckingOut} onClick={() => setMpesaModalOpen(false)}>×</button>
+            </div>
+            <form onSubmit={async (event) => {
+              event.preventDefault();
+              const completed = await onCheckout("mpesa", mpesaPhone);
+              if (completed) {
+                setMpesaModalOpen(false);
+                setMpesaPhone("");
+              }
+            }}>
+              <label className="prescription-field">
+                Customer phone number
+                <input
+                  type="tel"
+                  value={mpesaPhone}
+                  disabled={isCheckingOut}
+                  onChange={(event) => setMpesaPhone(event.target.value)}
+                  required
+                  maxLength={30}
+                  placeholder="07XX XXX XXX or 2547XX XXX XXX"
+                  autoFocus
+                />
+              </label>
+              <div className="modal-actions">
+                <button className="button button-secondary" type="button" disabled={isCheckingOut} onClick={() => setMpesaModalOpen(false)}>Cancel</button>
+                <button className="button button-primary" type="submit" disabled={isCheckingOut} aria-busy={isCheckingOut}>
+                  {isCheckingOut ? <><span className="checkout-spinner" aria-hidden="true" />Waiting for PayAssure…</> : "Initiate M-Pesa payment"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </section>
   );
 }

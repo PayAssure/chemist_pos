@@ -1,7 +1,9 @@
 import { money } from "../lib/money";
 import type { DashboardData } from "../types";
 
-type DashboardProps = { data: DashboardData };
+type DashboardProps = {
+  data: DashboardData;
+};
 
 function Dashboard({ data }: DashboardProps) {
   const dateLabel = new Date(`${data.date}T00:00:00`).toLocaleDateString();
@@ -87,8 +89,8 @@ function Dashboard({ data }: DashboardProps) {
         <article className="panel">
           <div className="panel-heading">
             <div>
-              <h2>Today’s transactions</h2>
-              <p>Completed sales and failed checkout attempts.</p>
+              <h2>Recent transactions & settlements</h2>
+              <p>Completed sales, checkout failures and PayAssure settlement status.</p>
             </div>
           </div>
           {data.transactions.length ? (
@@ -97,7 +99,11 @@ function Dashboard({ data }: DashboardProps) {
                 <div className="dashboard-transaction" key={transaction.id}>
                   <div>
                     <strong>
-                      {transaction.status === "completed" ? "Sale completed" : "Checkout failed"}
+                      {transaction.status === "completed"
+                        ? "Sale completed"
+                        : transaction.status === "pending"
+                          ? "Awaiting PayAssure collection"
+                          : "Checkout failed"}
                     </strong>
                     <span>
                       {new Date(transaction.createdAt).toLocaleTimeString()} ·{" "}
@@ -112,6 +118,22 @@ function Dashboard({ data }: DashboardProps) {
                     )}
                     {transaction.failureReason && (
                       <small className="expiry-warning">{transaction.failureReason}</small>
+                    )}
+                    {transaction.settlementStatus && (
+                      <>
+                        <small className={transaction.settlementStatus === "failed" ? "expiry-warning" : ""}>
+                          PayAssure settlement: {transaction.settlementStatus}
+                          {transaction.settlementAttemptCount !== null
+                            ? ` · attempts ${transaction.settlementAttemptCount}`
+                            : ""}
+                          {transaction.nextRetryAt && transaction.settlementStatus === "failed"
+                            ? ` · next retry ${new Date(transaction.nextRetryAt).toLocaleString()}`
+                            : ""}
+                        </small>
+                        {transaction.settlementError && (
+                          <small className="expiry-warning">{transaction.settlementError}</small>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="dashboard-transaction-result">

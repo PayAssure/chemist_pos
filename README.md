@@ -8,7 +8,8 @@ A lightweight pharmacy point of sale for private staff accounts. It provides med
 - PostgreSQL
 
 Set `DATABASE_URL` and a random `SESSION_SECRET` (at least 32 characters) in `.env`.
-To enable PayAssure participant data, also set `PAYASSURE_API_BASE_URL`, `PAYASSURE_IDENTIFIER`, and `PAYASSURE_PASSWORD`. The server signs in or rotates its refresh token at POS login, stores both tokens encrypted with `SESSION_SECRET`, and proxies the authenticated participant request; API keys and secrets are never returned to the browser.
+To enable PayAssure participant data, the supplier directory, and settlement checkout, also set `PAYASSURE_API_BASE_URL`, `PAYASSURE_IDENTIFIER`, and `PAYASSURE_PASSWORD`. The server signs in or rotates its refresh token at POS login, stores both tokens encrypted with `SESSION_SECRET`, and proxies authenticated PayAssure requests. Retailer API credentials are used by the server for settlement authentication; settlement logs redact credentials and session tokens.
+To receive collection and settlement events, the server registers `${PAYASSURE_API_BASE_URL}/webhook` as the retailer participant's fallback URL at POS login. The configured base URL is also used for outbound PayAssure API requests, so its host or reverse proxy must route those API paths correctly and route incoming `/webhook` requests to this POS server. That callback must be publicly reachable by PayAssure; an integration-specific webhook URL takes precedence and must use the same endpoint if set. The listener verifies PayAssure's raw-body HMAC signature and five-minute timestamp window using the API secret for the recipient merchant ID.
 
 ```sh
 npm install
@@ -25,13 +26,14 @@ POS_USER_EMAIL=staff@example.test POS_USER_PASSWORD='use-a-long-unique-password'
 
 ## Pharmacy flows
 
-- Each product requires a recorded supplier. Suppliers are marked as enrolled or not enrolled in PayAssure; only enrolled suppliers require a merchant ID.
+- Each product requires a recorded supplier. Enrolled suppliers are selected from the PayAssure supplier directory; other suppliers can be added with optional contact name, phone, email, and address details.
 - Product records include brand, category, active ingredient, dosage form, strength, selling unit, optional units per pack, barcode/stock code, description, reorder level, and a prescription-required flag. Product details can be edited without changing batch stock. Stock and prices are counted per selected selling unit; pack size is informational.
 - Inventory is recorded by batch code, expiry date, and quantity. Unknown-expiry legacy stock is retained for audit/count purposes, but cannot be sold.
-- Checkout locks stock, consumes the earliest-expiring unexpired batches first, and records the batch on each sale item. Credit checkout requires the payer’s name and phone number.
+- Checkout locks stock, consumes the earliest-expiring unexpired batches first, and records the batch on each sale item. Credit checkout requires the payer’s name and phone number and maps to CASH for PayAssure. M-Pesa checkout asks for the customer’s phone number and sends the full sale amount through PayAssure.
 - Checkout requires a prescription reference for any cart containing a prescription-required medicine. The signed-in staff account is recorded as having checked it; this is an operator attestation, not external prescription verification.
+- Checkout persists a pending sale and inventory reservation before initiating PayAssure, then waits for a signed collection result. Inventory quantities are deducted only once, after `payment.collection.succeeded`; `payment.collection.failed` releases the reservation without changing inventory. The UI polls the pending checkout and never re-initiates the same merchant transaction reference, preventing duplicate customer charges.
+- Signed settlement-started, progress, partially-failed, retrying, completed, and reconciliation-required events update settlement tracking independently from collection. PayAssure owns payment and payout retries; the POS does not re-submit a failed request because that could charge the customer twice.
 - Transaction history shows payment status, items, batches, and prescription reference. It is informational, not an accounting ledger.
-- M-Pesa requests and status checks go only through the backend. Until the PayAssure API contract is available, those endpoints return `503 MPESA_NOT_CONFIGURED`; no successful M-Pesa payment is simulated.
 
 ## Sample data and users
 
@@ -50,15 +52,14 @@ All endpoints except health and login require an authenticated session.
 - `GET /api/health`
 - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`
 - `GET/POST /api/suppliers`
+- `GET /api/payassure/suppliers` — loads and filters the authenticated PayAssure supplier directory.
 - `GET/POST /api/products` — creating a product also requires its initial batch code and expiry
 - `GET /api/batches`
 - `POST /api/products/:id/batches` — receive a batch
 - `PATCH /api/batches/:id/stock` — correct one batch's on-hand count
-- `POST /api/checkout` — cash or credit checkout (credit requires `payerName` and `payerPhone`), or an explicit M-Pesa-not-configured response
-- `GET /api/checkout/:reference/status`
+- `POST /api/checkout` — cash, credit, or M-Pesa checkout; accepts an optional stable `merchantTransactionReference`, and requires `payerPhone` for M-Pesa
+- `GET /api/checkout/:reference/status` — returns collection and settlement status for the checkout reference or sale ID.
+- `POST /webhook` — public PayAssure callback; verifies timestamped HMAC signatures and deduplicates by recipient merchant ID plus event ID.
 - `GET /api/sales`
 
-## PayAssure merchant ID validation
-
-For suppliers marked as enrolled, the merchant ID is mandatory and cannot be blank, but its real format or validity cannot be verified until the PayAssure contract or validation endpoint is provided. The app does not claim that a non-empty ID has been validated.
 # chemist_pos

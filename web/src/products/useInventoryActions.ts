@@ -10,7 +10,7 @@ export function useInventoryActions(
   setError: SetMessage,
   setNotice: SetMessage,
 ) {
-  async function saveSupplier(event: FormEvent<HTMLFormElement>) {
+  async function saveSupplier(event: FormEvent<HTMLFormElement>): Promise<boolean> {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
@@ -22,13 +22,19 @@ export function useInventoryActions(
           name: form.get("name"),
           payassureEnrolled: form.get("payassureEnrolled") === "true",
           merchantId: form.get("merchantId") ?? "",
+          contactName: form.get("contactName") ?? "",
+          phone: form.get("phone") ?? "",
+          email: form.get("email") ?? "",
+          address: form.get("address") ?? "",
         }),
       });
       formElement.reset();
       setNotice("Supplier added.");
       await refreshData();
+      return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not add supplier");
+      return false;
     }
   }
 

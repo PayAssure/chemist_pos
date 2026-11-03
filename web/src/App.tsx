@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Checkout from "./checkout/Checkout";
 import Login from "./auth/Login";
 import Inventory from "./products/Inventory";
@@ -56,7 +56,8 @@ function mapPayassureParticipant(
     updatedAt: participant.updatedAt ?? "",
     integration: participant.integration
       ? {
-          id: participant.integration.id ?? "",
+          apiKey: participant.integration.apiKey ?? "",
+          apiSecret: participant.integration.apiSecret ?? "",
           merchantId: participant.integration.merchantId ?? "",
           environment: participant.integration.environment ?? "",
           isActive: participant.integration.isActive ?? false,
@@ -112,6 +113,16 @@ function App() {
   const [prescriptionReference, setPrescriptionReference] = useState("");
   const [payerName, setPayerName] = useState("");
   const [payerPhone, setPayerPhone] = useState("");
+  const [checkoutPending, setCheckoutPending] = useState(false);
+  const checkoutReference = useRef<string | null>(null);
+  if (checkoutReference.current === null) {
+    try {
+      checkoutReference.current = window.sessionStorage.getItem("payassure-checkout-reference") ?? "";
+    } catch (reason) {
+      console.warn("Could not restore the pending checkout reference:", reason);
+      checkoutReference.current = "";
+    }
+  }
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [retailerProfile, setRetailerProfile] = useState<RetailerProfileData>(
@@ -154,6 +165,10 @@ function App() {
     setDashboard(nextDashboard);
   }, []);
 
+  const refreshDashboard = useCallback(async () => {
+    setDashboard(await api<DashboardData>("/api/dashboard"));
+  }, []);
+
   useEffect(() => {
     api<{ email: string }>("/api/auth/me")
       .then((user) => {
@@ -194,6 +209,16 @@ function App() {
       );
     }
   }, [email, refreshData]);
+
+  useEffect(() => {
+    if (!email || tab !== "dashboard") return;
+    const timer = window.setInterval(() => {
+      refreshDashboard().catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : "Could not refresh dashboard data"),
+      );
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [email, refreshDashboard, tab]);
 
   const cartItems = useMemo(
     () =>
@@ -250,31 +275,117 @@ function App() {
     }
   }
 
-  async function checkout(paymentMethod: "cash" | "mpesa" | "credit") {
+  async function checkout(
+    paymentMethod: "cash" | "mpesa" | "credit",
+    mpesaPhone?: string,
+  ): Promise<boolean> {
     setError("");
     setNotice("");
+    setCheckoutPending(true);
+    const reference = checkoutReference.current || `POS-${window.crypto.randomUUID()}`;
+    checkoutReference.current = reference;
     try {
-      await api("/api/checkout", {
-        method: "POST",
-        body: JSON.stringify({
-          paymentMethod,
-          ...(paymentMethod === "credit" ? { payerName, payerPhone } : {}),
-          ...(prescriptionRequired ? { prescriptionReference } : {}),
-          items: cartItems.map(({ product, quantity }) => ({
-            productId: product.id,
-            quantity,
-          })),
-        }),
-      });
+      window.sessionStorage.setItem("payassure-checkout-reference", reference);
+    } catch (reason) {
+      console.warn("Could not persist the checkout reference for a retry:", reason);
+    }
+
+    type CheckoutStatus = {
+      id: number;
+      status: "pending" | "completed" | "failed";
+      collectionStatus: "pending" | "succeeded" | "failed";
+      settlementError: string | null;
+    };
+
+    const fetchStatus = () =>
+      api<CheckoutStatus>(`/api/checkout/${encodeURIComponent(reference)}/status`);
+
+    try {
+      let checkoutStatus: CheckoutStatus | null = null;
+      let initiationError: string | null = null;
+      try {
+        checkoutStatus = await api<CheckoutStatus>("/api/checkout", {
+          method: "POST",
+          body: JSON.stringify({
+            paymentMethod,
+            merchantTransactionReference: reference,
+            ...(paymentMethod === "credit" ? { payerName, payerPhone } : {}),
+            ...(paymentMethod === "mpesa" ? { payerPhone: mpesaPhone } : {}),
+            ...(prescriptionRequired ? { prescriptionReference } : {}),
+            items: cartItems.map(({ product, quantity }) => ({
+              productId: product.id,
+              quantity,
+            })),
+          }),
+        });
+      } catch (reason) {
+        initiationError = reason instanceof Error ? reason.message : "Could not initiate PayAssure checkout";
+        try {
+          checkoutStatus = await fetchStatus();
+        } catch {
+          throw new Error(initiationError);
+        }
+      }
+
+      const deadline = Date.now() + 120_000;
+      while (checkoutStatus?.collectionStatus === "pending" && Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        try {
+          checkoutStatus = await fetchStatus();
+        } catch (reason) {
+          if (initiationError) throw new Error(initiationError);
+          throw reason;
+        }
+      }
+
+      if (checkoutStatus?.collectionStatus === "pending") {
+        setNotice("PayAssure is still processing this payment. Do not retry; this checkout reference is being monitored.");
+        await refreshData().catch(() => undefined);
+        return false;
+      }
+      if (checkoutStatus?.collectionStatus !== "succeeded") {
+        throw new Error(
+          checkoutStatus?.settlementError ??
+            initiationError ??
+            "PayAssure did not confirm collection. The sale was not completed.",
+        );
+      }
+
+      checkoutReference.current = "";
+      try {
+        window.sessionStorage.removeItem("payassure-checkout-reference");
+      } catch (reason) {
+        console.warn("Could not clear the completed checkout reference:", reason);
+      }
       setCart({});
       setPrescriptionReference("");
       setPayerName("");
       setPayerPhone("");
-      setNotice("Sale completed. Stock and transaction history are updated.");
-      await refreshData();
+      setNotice("PayAssure confirmed collection and the sale was saved.");
+      try {
+        await refreshData();
+      } catch {
+        setNotice("PayAssure confirmed collection and the sale was saved, but POS data could not refresh.");
+      }
+      return true;
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Checkout failed";
       setError(message);
+      let collectionFailed = false;
+      try {
+        const status = await fetchStatus();
+        collectionFailed = status.collectionStatus === "failed";
+      } catch {
+        collectionFailed = false;
+      }
+      if (collectionFailed || message.startsWith("This checkout reference was already used")) {
+        checkoutReference.current = "";
+        try {
+          window.sessionStorage.removeItem("payassure-checkout-reference");
+        } catch (storageError) {
+          console.warn("Could not clear the conflicting checkout reference:", storageError);
+        }
+      }
       try {
         await refreshData();
       } catch (refreshReason) {
@@ -282,6 +393,9 @@ function App() {
           refreshReason instanceof Error ? refreshReason.message : "Could not refresh POS data";
         setError(`${message}. ${refreshMessage}`);
       }
+      return false;
+    } finally {
+      setCheckoutPending(false);
     }
   }
 
@@ -368,7 +482,9 @@ function App() {
           </div>
         </div>
 
-        {tab === "dashboard" && dashboard && <Dashboard data={dashboard} />}
+        {tab === "dashboard" && dashboard && (
+          <Dashboard data={dashboard} />
+        )}
         {tab === "checkout" && (
           <Checkout
             products={products}
@@ -382,6 +498,7 @@ function App() {
             onPrescriptionReferenceChange={setPrescriptionReference}
             onPayerNameChange={setPayerName}
             onPayerPhoneChange={setPayerPhone}
+            isCheckingOut={checkoutPending}
             onCheckout={checkout}
           />
         )}

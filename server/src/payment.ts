@@ -5,10 +5,6 @@ export class PaymentIntegrationNotConfiguredError extends Error {
   }
 }
 
-export async function startMpesaCheckout(): Promise<never> {
-  throw new PaymentIntegrationNotConfiguredError();
-}
-
 export async function getMpesaCheckoutStatus(_reference: string): Promise<never> {
   throw new PaymentIntegrationNotConfiguredError();
 }

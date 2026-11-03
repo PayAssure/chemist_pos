@@ -6,27 +6,36 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
 import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { z } from "zod";
 import { requireAuth } from "./auth";
 import { initializeDatabase, pool } from "./db";
 import {
-  getMpesaCheckoutStatus,
-  PaymentIntegrationNotConfiguredError,
-  startMpesaCheckout,
-} from "./payment";
-import {
+  getPayassureSupplierDirectory,
   getPayassureParticipant,
+  initiatePayassureSettlement,
   isPayassureConfigured,
   PayassureHttpError,
+  getPayassureWebhookSecret,
+  registerPayassureWebhookUrl,
+  type PayassureSettlementPayload,
   refreshPayassureSession,
   updatePayassureParticipant,
 } from "./payassure";
+import {
+  parsePayassureWebhookEvent,
+  readPayassureWebhookRecipient,
+  verifyPayassureWebhookSignature,
+  type PayassureWebhookEvent,
+} from "./payassure-webhook";
 
 const app = express();
 const PgSession = connectPgSimple(session);
 const port = Number(process.env.PORT ?? 3000);
 const sessionSecret = process.env.SESSION_SECRET;
+
+app.use("/webhook", express.raw({ type: "application/json", limit: "64kb" }));
 
 if (!sessionSecret || sessionSecret.length < 32) {
   throw new Error("SESSION_SECRET must be set to at least 32 characters");
@@ -68,7 +77,14 @@ const loginSchema = z.object({
 const supplierSchema = z.object({
   name: z.string().trim().min(1).max(120),
   payassureEnrolled: z.boolean(),
-  merchantId: z.string().trim().max(200),
+  merchantId: z.string().trim().max(200).default(""),
+  contactName: z.string().trim().max(120).default(""),
+  phone: z.string().trim().max(30).default(""),
+  email: z.string().trim().max(254).refine(
+    (value) => !value || z.email().safeParse(value).success,
+    "Provide a valid supplier email address",
+  ).default(""),
+  address: z.string().trim().max(300).default(""),
 }).superRefine((supplier, context) => {
   if (supplier.payassureEnrolled && !supplier.merchantId) {
     context.addIssue({
@@ -136,6 +152,7 @@ const buyingPriceSchema = z.object({
 });
 const checkoutSchema = z.object({
   paymentMethod: z.enum(["cash", "mpesa", "credit"]),
+  merchantTransactionReference: z.string().trim().min(1).max(120).optional(),
   payerName: z.string().trim().max(120).optional(),
   payerPhone: z.string().trim().max(30).optional(),
   prescriptionReference: z.string().trim().max(120).optional(),
@@ -164,6 +181,16 @@ const checkoutSchema = z.object({
         message: "A valid payer phone number is required for credit sales",
       });
     }
+  }
+  if (
+    checkout.paymentMethod === "mpesa" &&
+    (!checkout.payerPhone || checkout.payerPhone.replace(/\D/g, "").length < 9)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["payerPhone"],
+      message: "A valid customer phone number is required for M-Pesa",
+    });
   }
 });
 const payassurePaymentUpdateSchema = z.object({
@@ -218,7 +245,8 @@ function safePayassureParticipant(value: unknown): unknown {
       updatedAt: participant.updatedAt,
       integration: integration
         ? {
-            id: integration.id,
+            apiKey: integration.apiKey,
+            apiSecret: integration.apiSecret,
             merchantId: integration.merchantId,
             environment: integration.environment,
             isActive: integration.isActive,
@@ -278,6 +306,7 @@ app.post("/api/auth/login", loginLimiter, async (req, res, next) => {
     if (isPayassureConfigured()) {
       try {
         await refreshPayassureSession();
+        await registerPayassureWebhookUrl();
       } catch (integrationError) {
         payassureError =
           integrationError instanceof Error
@@ -335,6 +364,43 @@ app.get("/api/payassure/me", requireAuth, async (_req, res) => {
   }
 });
 
+app.get("/api/payassure/suppliers", requireAuth, async (_req, res) => {
+  try {
+    const directory = z.object({
+      success: z.literal(true),
+      suppliers: z.array(z.object({
+        merchantId: z.string().trim().min(1).max(200),
+        businessName: z.string().trim().min(1).max(120),
+        contactName: z.string().trim().max(120).nullish().transform((value) => value ?? ""),
+        email: z.string().trim().max(254).nullish().transform((value) => value ?? ""),
+        phoneNumber: z.string().trim().max(30).nullish().transform((value) => value ?? ""),
+        physicalAddress: z.string().trim().max(300).nullish().transform((value) => value ?? ""),
+      })),
+    }).parse(await getPayassureSupplierDirectory());
+    res.json({
+      suppliers: directory.suppliers.map(({
+        businessName,
+        merchantId,
+        contactName,
+        email,
+        phoneNumber,
+        physicalAddress,
+      }) => ({
+        name: businessName,
+        merchantId,
+        contactName,
+        phone: phoneNumber,
+        email,
+        address: physicalAddress,
+      })),
+    });
+  } catch (error) {
+    res.status(isPayassureConfigured() ? 502 : 503).json({
+      error: error instanceof Error ? error.message : "Could not load PayAssure suppliers",
+    });
+  }
+});
+
 app.patch("/api/payassure/me", requireAuth, async (req, res) => {
   const parsed = payassureParticipantUpdateSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -357,7 +423,8 @@ app.get("/api/suppliers", requireAuth, async (_req, res, next) => {
   try {
     const result = await pool.query(
       `SELECT id, name, payassure_merchant_id AS "merchantId",
-              payassure_enrolled AS "payassureEnrolled"
+              payassure_enrolled AS "payassureEnrolled",
+              contact_name AS "contactName", phone, email, address
        FROM suppliers ORDER BY name`,
     );
     res.json(result.rows);
@@ -374,14 +441,20 @@ app.post("/api/suppliers", requireAuth, async (req, res, next) => {
   }
   try {
     const result = await pool.query(
-      `INSERT INTO suppliers (name, payassure_merchant_id, payassure_enrolled)
-       VALUES ($1, $2, $3)
+      `INSERT INTO suppliers
+         (name, payassure_merchant_id, payassure_enrolled, contact_name, phone, email, address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, name, payassure_merchant_id AS "merchantId",
-                 payassure_enrolled AS "payassureEnrolled"`,
+                 payassure_enrolled AS "payassureEnrolled",
+                 contact_name AS "contactName", phone, email, address`,
       [
         parsed.data.name,
         parsed.data.payassureEnrolled ? parsed.data.merchantId : null,
         parsed.data.payassureEnrolled,
+        parsed.data.contactName,
+        parsed.data.phone,
+        parsed.data.email,
+        parsed.data.address,
       ],
     );
     res.status(201).json(result.rows[0]);
@@ -403,7 +476,16 @@ app.get("/api/products", requireAuth, async (_req, res, next) => {
               p.units_per_pack AS "unitsPerPack", p.reorder_level AS "reorderLevel",
               p.barcode, p.stock_code AS "stockCode", p.description,
               COALESCE((
-                SELECT SUM(b.stock_count)::integer
+                SELECT SUM(GREATEST(
+                  b.stock_count - COALESCE((
+                    SELECT SUM(reserved_item.quantity)
+                    FROM sale_items reserved_item
+                    JOIN sales reserved_sale ON reserved_sale.id = reserved_item.sale_id
+                    WHERE reserved_sale.status = 'pending'
+                      AND reserved_item.batch_id = b.id
+                  ), 0),
+                  0
+                ))::integer
                 FROM product_batches b
                 WHERE b.product_id = p.id AND b.expiry_date >= CURRENT_DATE
               ), 0) AS "saleableCount",
@@ -727,14 +809,46 @@ app.patch("/api/batches/:id/stock", requireAuth, async (req, res, next) => {
       return;
     }
     const productId = Number(batchInfo.rows[0].product_id);
-    await client.query("SELECT id FROM products WHERE id = $1 FOR UPDATE", [
-      productId,
-    ]);
+    const product = await client.query<{ stock_count: number }>(
+      "SELECT stock_count FROM products WHERE id = $1 FOR UPDATE",
+      [productId],
+    );
     const batch = await client.query(
       "SELECT stock_count FROM product_batches WHERE id = $1 FOR UPDATE",
       [id],
     );
+    const reservations = await client.query<{ quantity: string }>(
+      `SELECT COALESCE(SUM(item.quantity), 0)::text AS quantity
+       FROM sale_items item
+       JOIN sales pending_sale ON pending_sale.id = item.sale_id
+       WHERE pending_sale.status = 'pending' AND item.batch_id = $1`,
+      [id],
+    );
+    if (parsed.data.stockCount < Number(reservations.rows[0].quantity)) {
+      await client.query("ROLLBACK");
+      res.status(409).json({
+        error: "Batch stock cannot be reduced below quantities reserved for pending PayAssure collections",
+      });
+      return;
+    }
     const difference = parsed.data.stockCount - Number(batch.rows[0].stock_count);
+    const reservedProductStock = await client.query<{ quantity: string }>(
+      `SELECT COALESCE(SUM(item.quantity), 0)::text AS quantity
+       FROM sale_items item
+       JOIN sales pending_sale ON pending_sale.id = item.sale_id
+       WHERE pending_sale.status = 'pending' AND item.product_id = $1`,
+      [productId],
+    );
+    if (
+      Number(product.rows[0].stock_count) + difference <
+      Number(reservedProductStock.rows[0].quantity)
+    ) {
+      await client.query("ROLLBACK");
+      res.status(409).json({
+        error: "Product stock cannot be reduced below quantities reserved for pending PayAssure collections",
+      });
+      return;
+    }
     const result = await client.query(
       `UPDATE product_batches SET stock_count = $2 WHERE id = $1
        RETURNING id, product_id AS "productId", batch_code AS "batchCode",
@@ -781,10 +895,514 @@ async function recordFailedCheckout(
   );
 }
 
+function normalizeMpesaPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (/^(07|01)\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
+  if (/^(7|1)\d{8}$/.test(digits)) return `254${digits}`;
+  if (/^254(7|1)\d{8}$/.test(digits)) return digits;
+  throw new Error("Enter a valid Kenyan M-Pesa phone number");
+}
+
+function checkoutRequestFingerprint(
+  checkout: z.infer<typeof checkoutSchema>,
+  normalizedMpesaPhone: string | null,
+): string {
+  const requestedQuantities = new Map<number, number>();
+  for (const item of checkout.items) {
+    requestedQuantities.set(
+      item.productId,
+      (requestedQuantities.get(item.productId) ?? 0) + item.quantity,
+    );
+  }
+  const details = {
+    paymentMethod: checkout.paymentMethod,
+    items: [...requestedQuantities]
+      .sort(([productIdA], [productIdB]) => productIdA - productIdB)
+      .map(([productId, quantity]) => ({ productId, quantity })),
+    payerName: checkout.payerName?.trim() ?? null,
+    payerPhone: normalizedMpesaPhone ?? checkout.payerPhone?.trim() ?? null,
+    prescriptionReference: checkout.prescriptionReference?.trim() ?? null,
+  };
+  return createHash("sha256").update(JSON.stringify(details)).digest("hex");
+}
+
+function settlementFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Unknown PayAssure settlement error";
+  return message
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/("(?:apiKey|apiSecret|token|accessToken|refreshToken)"\s*:\s*")[^"]+/gi, "$1[REDACTED]");
+}
+
+type StoredSettlementPayload = Omit<PayassureSettlementPayload, "items"> & {
+  items: Array<
+    Omit<PayassureSettlementPayload["items"][number], "supplierAmount" | "retailerAmount"> & {
+      supplierAmount: number | null;
+      retailerAmount: number | null;
+    }
+  >;
+};
+
+async function prepareSettlementPayload(
+  saleId: number,
+  payload: StoredSettlementPayload,
+  client?: PoolClient,
+): Promise<PayassureSettlementPayload> {
+  const query = `SELECT s.total_cents::text AS "totalCents",
+            COALESCE(supplier.payassure_merchant_id, '') AS "supplierMerchantId",
+            supplier.name AS "supplierName",
+            supplier.payassure_enrolled AS "supplierEnrolled",
+            COALESCE(NULLIF(p.stock_code, ''), NULLIF(p.barcode, ''),
+                     'POS-PRODUCT-' || i.product_id::text) AS "itemReference",
+            CASE WHEN BOOL_OR(COALESCE(
+              i.buying_unit_price_cents, p.buying_price_cents
+            ) IS NULL) THEN NULL ELSE SUM(
+              COALESCE(i.buying_unit_price_cents, p.buying_price_cents)::bigint * i.quantity
+            )::text END AS "supplierAmountCents",
+            CASE WHEN BOOL_OR(COALESCE(
+              i.buying_unit_price_cents, p.buying_price_cents
+            ) IS NULL) THEN NULL ELSE SUM(
+              (i.unit_price_cents::bigint -
+                COALESCE(i.buying_unit_price_cents, p.buying_price_cents)::bigint)
+              * i.quantity
+            )::text END AS "retailerAmountCents",
+            BOOL_OR(COALESCE(
+              i.buying_unit_price_cents, p.buying_price_cents
+            ) IS NULL) AS "missingBuyingPrice"
+     FROM sale_items i
+     JOIN sales s ON s.id = i.sale_id
+     JOIN products p ON p.id = i.product_id
+     JOIN suppliers supplier ON supplier.id = COALESCE(i.supplier_id, p.supplier_id)
+     WHERE i.sale_id = $1
+     GROUP BY s.total_cents, i.product_id, p.stock_code, p.barcode,
+              supplier.payassure_merchant_id, supplier.name, supplier.payassure_enrolled
+     ORDER BY i.product_id`;
+  const values = [saleId];
+  const result = client
+    ? await client.query<{
+    totalCents: string;
+    supplierMerchantId: string;
+    supplierName: string;
+    supplierEnrolled: boolean;
+    itemReference: string;
+    supplierAmountCents: string | null;
+    retailerAmountCents: string | null;
+    missingBuyingPrice: boolean;
+  }>(query, values)
+    : await pool.query<{
+        totalCents: string;
+        supplierMerchantId: string;
+        supplierName: string;
+        supplierEnrolled: boolean;
+        itemReference: string;
+        supplierAmountCents: string | null;
+        retailerAmountCents: string | null;
+        missingBuyingPrice: boolean;
+      }>(query, values);
+  if (result.rows.length === 0) {
+    throw new Error("Cannot initiate settlement: the sale has no recorded items");
+  }
+  const items = result.rows.map((line) => {
+    if (line.missingBuyingPrice || line.supplierAmountCents === null || line.retailerAmountCents === null) {
+      throw new Error(
+        `Cannot initiate settlement: set a buying price for products supplied by ${line.supplierName}, then retry`,
+      );
+    }
+    if (!line.supplierEnrolled || !line.supplierMerchantId) {
+      throw new Error(
+        `Cannot initiate settlement: supplier ${line.supplierName} is not enrolled with a PayAssure merchant ID`,
+      );
+    }
+    const supplierAmountCents = Number(line.supplierAmountCents);
+    const retailerAmountCents = Number(line.retailerAmountCents);
+    if (retailerAmountCents < 0) {
+      throw new Error(
+        `Cannot initiate settlement: buying price exceeds the sale price for ${line.itemReference}`,
+      );
+    }
+    return {
+      supplierMerchantId: line.supplierMerchantId,
+      itemReference: line.itemReference,
+      supplierAmountCents,
+      retailerAmountCents,
+      supplierAmount: Number((supplierAmountCents / 100).toFixed(2)),
+      retailerAmount: Number((retailerAmountCents / 100).toFixed(2)),
+    };
+  });
+  const itemAmountCents = items.reduce(
+    (sum, item) => sum + item.supplierAmountCents + item.retailerAmountCents,
+    0,
+  );
+  if (itemAmountCents !== Number(result.rows[0].totalCents)) {
+    throw new Error("Cannot initiate settlement: item amounts do not match the sale total");
+  }
+  return {
+    ...payload,
+    items: items.map(({ supplierAmountCents: _supplierCents, retailerAmountCents: _retailerCents, ...item }) => item),
+  };
+}
+
+async function applyPayassureWebhookEvent(
+  client: PoolClient,
+  event: PayassureWebhookEvent,
+): Promise<void> {
+  const result = await client.query<{
+    id: number;
+    status: "completed" | "pending" | "failed";
+    totalCents: number;
+    collectionStatus: "pending" | "succeeded" | "failed";
+    settlementStatus: string;
+    lastEventAt: string | null;
+  }>(
+    `SELECT sale.id, sale.status, sale.total_cents AS "totalCents",
+            settlement.collection_status AS "collectionStatus",
+            settlement.status AS "settlementStatus",
+            settlement.last_event_at AS "lastEventAt"
+     FROM payassure_settlements settlement
+     JOIN sales sale ON sale.id = settlement.sale_id
+     WHERE settlement.merchant_transaction_reference = $1
+     FOR UPDATE OF settlement, sale`,
+    [event.merchantTransactionReference],
+  );
+  const sale = result.rows[0];
+  if (!sale) throw Object.assign(new Error("No matching checkout for this PayAssure event"), { status: 404 });
+  if (
+    event.currency !== "KES" ||
+    Math.round(event.amount * 100) !== Number(sale.totalCents)
+  ) {
+    throw Object.assign(new Error("PayAssure event amount or currency does not match the checkout"), {
+      status: 409,
+    });
+  }
+
+  const eventTime = event.createdAt ? new Date(event.createdAt) : null;
+  const isStaleSettlementEvent =
+    eventTime !== null &&
+    sale.lastEventAt !== null &&
+    eventTime.getTime() < new Date(sale.lastEventAt).getTime();
+
+  if (event.type === "payment.collection.succeeded") {
+    if (sale.collectionStatus !== "succeeded") {
+      const itemResult = await client.query<{
+        productId: number;
+        batchId: number | null;
+        quantity: number;
+      }>(
+        `SELECT product_id AS "productId", batch_id AS "batchId",
+                SUM(quantity)::integer AS quantity
+         FROM sale_items
+         WHERE sale_id = $1
+         GROUP BY product_id, batch_id
+         ORDER BY product_id, batch_id`,
+        [sale.id],
+      );
+      if (!itemResult.rows.length || itemResult.rows.some((item) => item.batchId === null)) {
+        throw new Error("Cannot confirm collection: sale inventory allocation is incomplete");
+      }
+
+      const productIds = [...new Set(itemResult.rows.map((item) => item.productId))].sort((a, b) => a - b);
+      const batchIds = [...new Set(itemResult.rows.map((item) => item.batchId!))].sort((a, b) => a - b);
+      await client.query(
+        "SELECT id FROM products WHERE id = ANY($1::integer[]) ORDER BY id FOR UPDATE",
+        [productIds],
+      );
+      await client.query(
+        "SELECT id FROM product_batches WHERE id = ANY($1::integer[]) ORDER BY id FOR UPDATE",
+        [batchIds],
+      );
+
+      const stockResult = await client.query<{
+        productId: number;
+        batchId: number;
+        quantity: number;
+        productStock: number;
+        batchStock: number;
+        pendingProduct: string;
+        pendingBatch: string;
+      }>(
+        `SELECT item.product_id AS "productId", item.batch_id AS "batchId",
+                SUM(item.quantity)::integer AS quantity,
+                product.stock_count AS "productStock",
+                batch.stock_count AS "batchStock",
+                COALESCE((
+                  SELECT SUM(other_item.quantity)
+                  FROM sale_items other_item
+                  JOIN sales other_sale ON other_sale.id = other_item.sale_id
+                  WHERE other_sale.status = 'pending'
+                    AND other_sale.id <> $1
+                    AND other_item.product_id = item.product_id
+                ), 0)::text AS "pendingProduct",
+                COALESCE((
+                  SELECT SUM(other_item.quantity)
+                  FROM sale_items other_item
+                  JOIN sales other_sale ON other_sale.id = other_item.sale_id
+                  WHERE other_sale.status = 'pending'
+                    AND other_sale.id <> $1
+                    AND other_item.batch_id = item.batch_id
+                ), 0)::text AS "pendingBatch"
+         FROM sale_items item
+         JOIN products product ON product.id = item.product_id
+         JOIN product_batches batch ON batch.id = item.batch_id
+         WHERE item.sale_id = $1
+         GROUP BY item.product_id, item.batch_id, product.stock_count, batch.stock_count
+         ORDER BY item.product_id, item.batch_id`,
+        [sale.id],
+      );
+      const productStock = new Map<number, { stock: number; pending: number }>();
+      const requiredByProduct = new Map<number, number>();
+      for (const stock of stockResult.rows) {
+         if (stock.batchStock - Number(stock.pendingBatch) < stock.quantity) {
+           throw new Error("Cannot confirm collection: reserved inventory is no longer available");
+         }
+         productStock.set(stock.productId, {
+           stock: stock.productStock,
+           pending: Number(stock.pendingProduct),
+         });
+         requiredByProduct.set(
+           stock.productId,
+           (requiredByProduct.get(stock.productId) ?? 0) + stock.quantity,
+        );
+        await client.query(
+          "UPDATE product_batches SET stock_count = stock_count - $2 WHERE id = $1",
+          [stock.batchId, stock.quantity],
+        );
+      }
+      for (const [productId, quantity] of requiredByProduct) {
+        const available = productStock.get(productId);
+        if (!available || available.stock - available.pending < quantity) {
+          throw new Error("Cannot confirm collection: reserved product inventory is no longer available");
+        }
+        await client.query(
+          "UPDATE products SET stock_count = stock_count - $2 WHERE id = $1",
+          [productId, quantity],
+        );
+      }
+      await client.query(
+        "UPDATE sales SET status = 'completed' WHERE id = $1 AND status IN ('pending', 'failed')",
+        [sale.id],
+      );
+    }
+
+    await client.query(
+      `UPDATE payassure_settlements
+       SET collection_status = 'succeeded',
+           status = CASE WHEN status IN ('queued', 'accepted') THEN 'processing' ELSE status END,
+           provider_settlement_id = $2,
+           last_error = NULL,
+           last_event_type = $3,
+           last_event_payload = $4::jsonb,
+           last_event_at = COALESCE($5::timestamptz, last_event_at),
+           updated_at = NOW()
+       WHERE sale_id = $1`,
+      [sale.id, event.settlementId, event.type, JSON.stringify(event.payload), event.createdAt],
+    );
+    return;
+  }
+
+  if (event.type === "payment.collection.failed") {
+    if (sale.collectionStatus !== "succeeded") {
+      const failedSale = await client.query(
+        "UPDATE sales SET status = 'failed' WHERE id = $1 AND status = 'pending'",
+        [sale.id],
+      );
+      await client.query(
+        `UPDATE payassure_settlements
+         SET collection_status = 'failed', status = 'failed',
+             last_error = $2, provider_settlement_id = $3,
+             last_event_type = $4, last_event_payload = $5::jsonb,
+             last_event_at = COALESCE($6::timestamptz, last_event_at),
+             updated_at = NOW()
+         WHERE sale_id = $1`,
+        [
+          sale.id,
+          String(event.details.failure_reason ?? "PayAssure collection failed"),
+          event.settlementId,
+          event.type,
+          JSON.stringify(event.payload),
+          event.createdAt,
+        ],
+      );
+      if (failedSale.rowCount) {
+        await client.query(
+          `INSERT INTO failed_checkout_attempts
+             (payment_method, total_cents, failure_reason, created_by)
+           SELECT payment_method, total_cents, $2, 'payassure-webhook'
+           FROM sales WHERE id = $1`,
+          [
+            sale.id,
+            String(event.details.failure_reason ?? "PayAssure collection failed"),
+          ],
+        );
+      }
+    }
+    return;
+  }
+
+  if (
+    sale.collectionStatus === "failed" ||
+    sale.settlementStatus === "completed" ||
+    isStaleSettlementEvent
+  ) return;
+
+  const settlementStatus = {
+    "payment.settlement.started": "processing",
+    "payment.settlement.progress": "processing",
+    "payment.settlement.partially_failed": "partially_failed",
+    "payment.settlement.retrying": "retrying",
+    "payment.settlement.completed": "completed",
+    "payment.settlement.reconciliation_required": "awaiting_reconciliation",
+  }[event.type];
+  const failureReason = event.details.failure_reason;
+  const attemptCount = event.details.attempt_count;
+  await client.query(
+    `UPDATE payassure_settlements
+     SET status = $2,
+         provider_settlement_id = $3,
+         last_error = CASE
+           WHEN $2 = 'partially_failed' THEN $4
+           WHEN $2 IN ('processing', 'completed') THEN NULL
+           ELSE last_error
+         END,
+         attempt_count = CASE
+           WHEN $2 = 'retrying' AND $5::integer > attempt_count THEN $5::integer
+           WHEN $2 = 'retrying' THEN attempt_count + 1
+           ELSE attempt_count
+         END,
+         last_event_type = $6,
+         last_event_payload = $7::jsonb,
+         last_event_at = COALESCE($8::timestamptz, last_event_at),
+         updated_at = NOW()
+     WHERE sale_id = $1`,
+    [
+      sale.id,
+      settlementStatus,
+      event.settlementId,
+      typeof failureReason === "string" ? failureReason : "PayAssure reported a payout failure",
+      typeof attemptCount === "number" && Number.isSafeInteger(attemptCount) ? attemptCount : 0,
+      event.type,
+      JSON.stringify(event.payload),
+      event.createdAt,
+    ],
+  );
+}
+
+app.post("/webhook", async (req, res, next) => {
+  const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
+  if (!rawBody) {
+    console.warn("[PayAssure] Rejected webhook without a raw JSON body");
+    res.status(400).json({ error: "Expected a JSON webhook body" });
+    return;
+  }
+  const recipientMerchantId = readPayassureWebhookRecipient(rawBody);
+  if (!recipientMerchantId) {
+    console.warn("[PayAssure] Rejected malformed webhook recipient");
+    res.status(400).json({ error: "Webhook recipient is missing or malformed" });
+    return;
+  }
+  const timestamp = req.get("x-payassure-timestamp") ?? undefined;
+  const signature = req.get("x-payassure-signature") ?? undefined;
+  let secret: string | null;
+  try {
+    secret = await getPayassureWebhookSecret(recipientMerchantId);
+  } catch (error) {
+    console.error("[PayAssure] Could not load webhook verification credentials", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    res.status(503).json({ error: "PayAssure webhook verification is temporarily unavailable" });
+    return;
+  }
+  if (!secret) {
+    console.warn("[PayAssure] Rejected webhook for unknown merchant", { recipientMerchantId });
+    res.status(401).json({ error: "Unknown PayAssure webhook recipient" });
+    return;
+  }
+  if (!verifyPayassureWebhookSignature(rawBody, timestamp, signature, secret)) {
+    console.warn("[PayAssure] Rejected webhook with invalid or stale signature", {
+      recipientMerchantId,
+    });
+    res.status(401).json({ error: "Invalid PayAssure webhook signature" });
+    return;
+  }
+
+  let event: PayassureWebhookEvent;
+  try {
+    event = parsePayassureWebhookEvent(
+      rawBody,
+      req.get("x-payassure-event-id") ?? undefined,
+      req.get("x-payassure-event") ?? undefined,
+    );
+  } catch (error) {
+    console.warn("[PayAssure] Rejected malformed webhook", {
+      recipientMerchantId,
+      message: error instanceof Error ? error.message : "Invalid event",
+    });
+    res.status(400).json({
+      error: error instanceof Error ? error.message : "Invalid PayAssure webhook event",
+    });
+    return;
+  }
+
+  let client: PoolClient;
+  try {
+    client = await pool.connect();
+  } catch (error) {
+    next(error);
+    return;
+  }
+  try {
+    await client.query("BEGIN");
+    const recorded = await client.query<{ id: number }>(
+      `INSERT INTO payassure_webhook_events
+         (recipient_merchant_id, provider_event_id, event_type, payload, signature_valid, status)
+       VALUES ($1, $2, $3, $4::jsonb, TRUE, 'received')
+       ON CONFLICT (recipient_merchant_id, provider_event_id) DO NOTHING
+       RETURNING id`,
+      [
+        event.recipientMerchantId,
+        event.id,
+        event.type,
+        JSON.stringify(event.payload),
+      ],
+    );
+    if (!recorded.rowCount) {
+      await client.query("COMMIT");
+      res.status(200).json({ received: true, duplicate: true });
+      return;
+    }
+
+    await applyPayassureWebhookEvent(client, event);
+    await client.query(
+      `UPDATE payassure_webhook_events
+       SET status = 'processed', processed_at = NOW()
+       WHERE id = $1`,
+      [recorded.rows[0].id],
+    );
+    await client.query("COMMIT");
+    res.status(200).json({ received: true });
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error("[PayAssure] Could not roll back webhook transaction", rollbackError);
+    }
+    const status = error && typeof error === "object" && "status" in error
+      ? Number((error as { status: unknown }).status)
+      : 500;
+    if (status === 404 || status === 409) {
+      res.status(status).json({
+        error: error instanceof Error ? error.message : "PayAssure webhook could not be applied",
+      });
+    } else {
+      next(error);
+    }
+  } finally {
+    client.release();
+  }
+});
+
 app.post("/api/checkout", requireAuth, async (req, res, next) => {
   const parsed = checkoutSchema.safeParse(req.body);
   if (!parsed.success) {
-    if (req.body?.paymentMethod === "credit") {
+    if (req.body?.paymentMethod === "credit" || req.body?.paymentMethod === "mpesa") {
       const payerIssue = parsed.error.issues.find(
         (issue) => issue.path[0] === "payerName" || issue.path[0] === "payerPhone",
       );
@@ -797,35 +1415,67 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
     return;
   }
 
+  const merchantTransactionReference =
+    parsed.data.merchantTransactionReference ?? `POS-${randomUUID()}`;
+  let mpesaPhone: string | null = null;
   if (parsed.data.paymentMethod === "mpesa") {
     try {
-      await startMpesaCheckout();
-      await recordFailedCheckout(
-        req.session.email!,
-        parsed.data.paymentMethod,
-        parsed.data.items,
-        "M-Pesa checkout is not configured",
-      );
-      res.status(501).json({ error: "M-Pesa checkout is not configured" });
+      mpesaPhone = normalizeMpesaPhone(parsed.data.payerPhone ?? "");
     } catch (error) {
-      try {
-        await recordFailedCheckout(
-          req.session.email!,
-          parsed.data.paymentMethod,
-          parsed.data.items,
-          error instanceof Error ? error.message : "M-Pesa checkout failed",
-        );
-      } catch (recordError) {
-        next(recordError);
-        return;
-      }
-      if (error instanceof PaymentIntegrationNotConfiguredError) {
-        res.status(503).json({
-          code: "MPESA_NOT_CONFIGURED",
-          error: error.message,
-        });
-        return;
-      }
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Enter a valid Kenyan M-Pesa phone number",
+      });
+      return;
+    }
+  }
+
+  const requestFingerprint = checkoutRequestFingerprint(parsed.data, mpesaPhone);
+  async function returnExistingSettlement(settlementId: number): Promise<void> {
+    const existingSale = await pool.query(
+      `SELECT s.id, s.payment_method AS "paymentMethod", s.status,
+              s.total_cents AS "totalCents", s.created_at AS "createdAt",
+              settlement.status AS "settlementStatus",
+              settlement.collection_status AS "collectionStatus",
+              settlement.last_error AS "settlementError",
+              settlement.merchant_transaction_reference AS "reference"
+       FROM sales s
+       JOIN payassure_settlements settlement ON settlement.sale_id = s.id
+       WHERE settlement.id = $1`,
+      [settlementId],
+    );
+    if (!existingSale.rowCount) {
+      res.status(404).json({ error: "Existing checkout was not found" });
+      return;
+    }
+    const checkout = existingSale.rows[0];
+    res.status(checkout.collectionStatus === "pending" ? 202 : 200).json(checkout);
+  }
+
+  let existingSettlement: { id: number; request_fingerprint: string | null } | undefined;
+  try {
+    const result = await pool.query<{ id: number; request_fingerprint: string | null }>(
+      `SELECT id, request_fingerprint FROM payassure_settlements
+       WHERE merchant_transaction_reference = $1`,
+      [merchantTransactionReference],
+    );
+    existingSettlement = result.rows[0];
+  } catch (error) {
+    next(error);
+    return;
+  }
+  if (existingSettlement) {
+    if (
+      existingSettlement.request_fingerprint !== null &&
+      existingSettlement.request_fingerprint !== requestFingerprint
+    ) {
+      res.status(409).json({
+        error: "This checkout reference was already used for a different sale. Retry with a new reference.",
+      });
+      return;
+    }
+    try {
+      await returnExistingSettlement(existingSettlement.id);
+    } catch (error) {
       next(error);
     }
     return;
@@ -849,12 +1499,44 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
     return;
   }
   let transactionOpen = false;
+  let clientReleased = false;
+  let payassureRequestStarted = false;
+  let payassureAccepted = false;
+  let stagedSaleId: number | null = null;
+  let stagedSettlementId: number | null = null;
   try {
     await client.query("BEGIN");
     transactionOpen = true;
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      merchantTransactionReference,
+    ]);
+    const duplicateSettlement = await client.query<{
+      id: number;
+      request_fingerprint: string | null;
+    }>(
+      `SELECT id, request_fingerprint FROM payassure_settlements
+       WHERE merchant_transaction_reference = $1`,
+      [merchantTransactionReference],
+    );
+    if (duplicateSettlement.rows[0]) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      if (
+        duplicateSettlement.rows[0].request_fingerprint !== null &&
+        duplicateSettlement.rows[0].request_fingerprint !== requestFingerprint
+      ) {
+        res.status(409).json({
+          error: "This checkout reference was already used for a different sale. Retry with a new reference.",
+        });
+      } else {
+        await returnExistingSettlement(duplicateSettlement.rows[0].id);
+      }
+      return;
+    }
     const productIds = [...quantities.keys()].sort((a, b) => a - b);
     const result = await client.query(
-      `SELECT id, name, price_cents, stock_count, prescription_required
+      `SELECT id, name, price_cents, buying_price_cents, supplier_id,
+              stock_count, prescription_required
        FROM products WHERE id = ANY($1::integer[]) ORDER BY id FOR UPDATE`,
       [productIds],
     );
@@ -871,9 +1553,26 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       id: string;
       name: string;
       price_cents: number;
+      buying_price_cents: number | null;
+      supplier_id: number;
       stock_count: number;
       prescription_required: boolean;
     }>;
+    const pendingProductStock = await client.query<{
+      product_id: number;
+      quantity: string;
+    }>(
+      `SELECT item.product_id, SUM(item.quantity)::text AS quantity
+       FROM sale_items item
+       JOIN sales pending_sale ON pending_sale.id = item.sale_id
+       WHERE pending_sale.status = 'pending'
+         AND item.product_id = ANY($1::integer[])
+       GROUP BY item.product_id`,
+      [productIds],
+    );
+    const reservedByProduct = new Map(
+      pendingProductStock.rows.map((row) => [Number(row.product_id), Number(row.quantity)]),
+    );
     const prescriptionRequired = products.some(
       (product) => product.prescription_required,
     );
@@ -890,7 +1589,7 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
     }
     for (const product of products) {
       const quantity = quantities.get(Number(product.id))!;
-      if (product.stock_count < quantity) {
+      if (product.stock_count - (reservedByProduct.get(Number(product.id)) ?? 0) < quantity) {
         await client.query("ROLLBACK");
         transactionOpen = false;
         const error = `Not enough stock for ${product.name}`;
@@ -901,11 +1600,18 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
     }
 
     const batchResult = await client.query(
-      `SELECT id, product_id, batch_code, expiry_date, stock_count
-       FROM product_batches
-       WHERE product_id = ANY($1::integer[])
-         AND stock_count > 0 AND expiry_date >= CURRENT_DATE
-       ORDER BY expiry_date ASC, id ASC
+      `SELECT batch.id, batch.product_id, batch.batch_code, batch.expiry_date,
+              batch.stock_count - COALESCE((
+                SELECT SUM(reserved_item.quantity)
+                FROM sale_items reserved_item
+                JOIN sales reserved_sale ON reserved_sale.id = reserved_item.sale_id
+                WHERE reserved_sale.status = 'pending'
+                  AND reserved_item.batch_id = batch.id
+              ), 0) AS stock_count
+       FROM product_batches batch
+       WHERE batch.product_id = ANY($1::integer[])
+         AND batch.stock_count > 0 AND batch.expiry_date >= CURRENT_DATE
+       ORDER BY batch.expiry_date ASC, batch.id ASC
        FOR UPDATE`,
       [productIds],
     );
@@ -962,7 +1668,7 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       `INSERT INTO sales
          (payment_method, status, total_cents, payer_name, payer_phone,
           prescription_reference, prescription_checked_by)
-       VALUES ($1, 'completed', $2, $3, $4, $5, $6) RETURNING id, created_at`,
+       VALUES ($1, 'pending', $2, $3, $4, $5, $6) RETURNING id, created_at`,
       [
         parsed.data.paymentMethod,
         totalCents,
@@ -973,17 +1679,9 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       ],
     );
     const saleId = Number(saleResult.rows[0].id);
+    stagedSaleId = saleId;
     for (const product of products) {
-      const quantity = quantities.get(Number(product.id))!;
-      await client.query(
-        `UPDATE products SET stock_count = stock_count - $2 WHERE id = $1`,
-        [product.id, quantity],
-      );
       for (const allocation of allocations.get(Number(product.id)) ?? []) {
-        await client.query(
-          "UPDATE product_batches SET stock_count = stock_count - $2 WHERE id = $1",
-          [allocation.batch.id, allocation.quantity],
-        );
         await client.query(
           `INSERT INTO sale_items
              (sale_id, product_id, product_name, quantity, unit_price_cents,
@@ -1006,14 +1704,108 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
         );
       }
     }
+
+    const settlementLines = await client.query<{
+      supplierMerchantId: string;
+      itemReference: string;
+      supplierAmountCents: string | null;
+      retailerAmountCents: string | null;
+    }>(
+      `SELECT COALESCE(s.payassure_merchant_id, '') AS "supplierMerchantId",
+              COALESCE(NULLIF(p.stock_code, ''), NULLIF(p.barcode, ''),
+                       'POS-PRODUCT-' || i.product_id::text) AS "itemReference",
+              CASE WHEN BOOL_OR(i.buying_unit_price_cents IS NULL)
+                THEN NULL ELSE SUM(
+                  i.buying_unit_price_cents::bigint * i.quantity
+                )::text END AS "supplierAmountCents",
+              CASE WHEN BOOL_OR(i.buying_unit_price_cents IS NULL)
+                THEN NULL ELSE SUM(
+                  (i.unit_price_cents::bigint - i.buying_unit_price_cents::bigint)
+                  * i.quantity
+                )::text END AS "retailerAmountCents"
+       FROM sale_items i
+       JOIN products p ON p.id = i.product_id
+       JOIN suppliers s ON s.id = COALESCE(i.supplier_id, p.supplier_id)
+       WHERE i.sale_id = $1
+       GROUP BY i.product_id, p.stock_code, p.barcode, s.payassure_merchant_id
+       ORDER BY i.product_id`,
+      [saleId],
+    );
+    const amount = Number((totalCents / 100).toFixed(2));
+    const payload: StoredSettlementPayload = {
+      merchantId: "",
+      merchantTransactionReference,
+      amount,
+      currency: "KES",
+      payment: {
+        methods: parsed.data.paymentMethod === "mpesa"
+          ? [{ type: "MPESA", amount, phoneNumber: mpesaPhone! }]
+          : [{ type: "CASH", amount }],
+      },
+      items: settlementLines.rows.map((line) => ({
+        supplierMerchantId: line.supplierMerchantId,
+        itemReference: line.itemReference,
+        supplierAmount: line.supplierAmountCents === null
+          ? null
+          : Number((Number(line.supplierAmountCents) / 100).toFixed(2)),
+        retailerAmount: line.retailerAmountCents === null
+          ? null
+          : Number((Number(line.retailerAmountCents) / 100).toFixed(2)),
+      })),
+      metadata: { posSaleId: String(saleId) },
+    };
+    const settlement = await client.query<{ id: number }>(
+      `INSERT INTO payassure_settlements
+         (sale_id, merchant_transaction_reference, request_fingerprint, request_payload)
+       VALUES ($1, $2, $3, $4::jsonb)
+       RETURNING id`,
+      [saleId, merchantTransactionReference, requestFingerprint, JSON.stringify(payload)],
+    );
+    const settlementId = Number(settlement.rows[0].id);
+    stagedSettlementId = settlementId;
+    const preparedPayload = await prepareSettlementPayload(saleId, payload, client);
     await client.query("COMMIT");
     transactionOpen = false;
-    res.status(201).json({
+    client.release();
+    clientReleased = true;
+
+    payassureRequestStarted = true;
+    const initiation = await initiatePayassureSettlement(preparedPayload, async (savedPayload) => {
+      await pool.query(
+        `UPDATE payassure_settlements
+         SET request_payload = $2::jsonb, updated_at = NOW()
+         WHERE id = $1`,
+        [settlementId, JSON.stringify(savedPayload)],
+      );
+    });
+    payassureAccepted = true;
+    await pool.query(
+      `UPDATE payassure_settlements
+       SET status = CASE WHEN status = 'queued' THEN 'accepted' ELSE status END,
+           last_error = NULL, provider_request_id = COALESCE(provider_request_id, $2),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [settlementId, initiation.providerRequestId],
+    );
+    const checkoutStatus = await pool.query(
+      `SELECT sale.status, settlement.status AS "settlementStatus",
+              settlement.collection_status AS "collectionStatus",
+              settlement.last_error AS "settlementError"
+       FROM sales sale
+       JOIN payassure_settlements settlement ON settlement.sale_id = sale.id
+       WHERE sale.id = $1`,
+      [saleId],
+    );
+    res.status(checkoutStatus.rows[0].collectionStatus === "pending" ? 202 : 200).json({
       id: saleId,
       paymentMethod: parsed.data.paymentMethod,
-      status: "completed",
+      reference: merchantTransactionReference,
+      status: checkoutStatus.rows[0].status,
       totalCents,
       createdAt: saleResult.rows[0].created_at,
+      settlementStatus: checkoutStatus.rows[0].settlementStatus,
+      collectionStatus: checkoutStatus.rows[0].collectionStatus,
+      settlementError: checkoutStatus.rows[0].settlementError,
     });
   } catch (error) {
     if (transactionOpen) {
@@ -1022,6 +1814,57 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       } catch (rollbackError) {
         console.error("Could not roll back checkout transaction:", rollbackError);
       }
+    }
+    if (payassureRequestStarted && !payassureAccepted) {
+      const definitiveRejection =
+        error instanceof PayassureHttpError && error.status >= 400 && error.status < 500;
+      try {
+        if (stagedSettlementId !== null) {
+          await pool.query(
+            `UPDATE payassure_settlements
+             SET status = CASE WHEN status IN ('queued', 'accepted') THEN 'failed' ELSE status END,
+                 collection_status = CASE WHEN $3::boolean THEN 'failed' ELSE collection_status END,
+                 last_error = $2, updated_at = NOW()
+             WHERE id = $1`,
+            [stagedSettlementId, settlementFailureMessage(error), definitiveRejection],
+          );
+        }
+        if (definitiveRejection && stagedSaleId !== null) {
+          const failed = await pool.query(
+            "UPDATE sales SET status = 'failed' WHERE id = $1 AND status = 'pending'",
+            [stagedSaleId],
+          );
+          if (failed.rowCount) {
+            await pool.query(
+              `INSERT INTO failed_checkout_attempts
+                 (payment_method, total_cents, failure_reason, created_by)
+               SELECT payment_method, total_cents, $2, $3 FROM sales WHERE id = $1`,
+              [stagedSaleId, settlementFailureMessage(error), req.session.email!],
+            );
+          }
+        }
+      } catch (persistenceError) {
+        next(persistenceError);
+        return;
+      }
+      res.status(502).json({
+        error: settlementFailureMessage(error),
+        reference: merchantTransactionReference,
+        collectionStatus: definitiveRejection ? "failed" : "pending",
+      });
+      return;
+    }
+    if (payassureAccepted) {
+      console.error("[PayAssure] Could not update local checkout status after PayAssure accepted initiation", {
+        merchantTransactionReference,
+        saleId: stagedSaleId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        message: settlementFailureMessage(error),
+      });
+      res.status(500).json({
+        error: "PayAssure accepted the payment request, but the POS could not refresh its status. Do not retry this checkout; check its status or contact support.",
+      });
+      return;
     }
     if (transactionOpen) {
       try {
@@ -1037,41 +1880,44 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
     }
     next(error);
   } finally {
-    client.release();
+    if (!clientReleased) client.release();
   }
 });
 
 app.get("/api/checkout/:reference/status", requireAuth, async (req, res, next) => {
   try {
     const reference = String(req.params.reference);
-    if (/^\d+$/.test(reference)) {
-      const sale = await pool.query(
-        "SELECT id, payment_method, status, total_cents, created_at FROM sales WHERE id = $1",
-        [reference],
-      );
-      if (sale.rowCount) {
-        res.json({
-          id: sale.rows[0].id,
-          paymentMethod: sale.rows[0].payment_method,
-          status: sale.rows[0].status,
-          totalCents: sale.rows[0].total_cents,
-          createdAt: sale.rows[0].created_at,
-        });
-        return;
-      }
-    }
-    await getMpesaCheckoutStatus(reference);
-    res.status(404).json({ error: "Checkout not found" });
-  } catch (error) {
-    if (error instanceof PaymentIntegrationNotConfiguredError) {
-      res.status(503).json({
-        code: "MPESA_NOT_CONFIGURED",
-        error: error.message,
-      });
+    const sale = await pool.query(
+      `SELECT sale.id, sale.payment_method AS "paymentMethod", sale.status,
+              sale.total_cents AS "totalCents", sale.created_at AS "createdAt",
+              settlement.status AS "settlementStatus",
+              settlement.collection_status AS "collectionStatus",
+              settlement.last_error AS "settlementError"
+       FROM sales sale
+       JOIN payassure_settlements settlement ON settlement.sale_id = sale.id
+       WHERE settlement.merchant_transaction_reference = $1
+          OR ($2::boolean AND sale.id = $3::integer)`,
+      [reference, /^\d+$/.test(reference), /^\d+$/.test(reference) ? Number(reference) : 0],
+    );
+    if (sale.rowCount) {
+      res.json(sale.rows[0]);
       return;
     }
+    res.status(404).json({ error: "Checkout not found" });
+  } catch (error) {
     next(error);
   }
+});
+
+app.post("/api/payassure/settlements/:id/retry", requireAuth, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    res.status(400).json({ error: "Provide a valid settlement ID" });
+    return;
+  }
+  res.status(409).json({
+    error: "PayAssure manages collection and payout retries. Reinitiating here could charge the customer twice.",
+  });
 });
 
 app.get("/api/dashboard", requireAuth, async (_req, res, next) => {
@@ -1124,23 +1970,45 @@ app.get("/api/dashboard", requireAuth, async (_req, res, next) => {
            AND created_at < CURRENT_DATE + INTERVAL '1 day'`,
       ),
       pool.query(
-        `SELECT id::text AS id, payment_method AS "paymentMethod", status,
-                total_cents AS "totalCents", created_at AS "createdAt",
-                NULL::text AS "failureReason", payer_name AS "payerName",
-                payer_phone AS "payerPhone"
-         FROM sales
-         WHERE status = 'completed'
-           AND created_at >= CURRENT_DATE
-           AND created_at < CURRENT_DATE + INTERVAL '1 day'
-         UNION ALL
-         SELECT ('failed-' || id)::text AS id, payment_method AS "paymentMethod",
-                'failed' AS status, total_cents AS "totalCents",
-                created_at AS "createdAt", failure_reason AS "failureReason",
-                NULL::text AS "payerName", NULL::text AS "payerPhone"
-         FROM failed_checkout_attempts
-         WHERE created_at >= CURRENT_DATE
-           AND created_at < CURRENT_DATE + INTERVAL '1 day'
-         ORDER BY "createdAt" DESC LIMIT 50`,
+        `SELECT * FROM (
+           SELECT s.id::text AS id, s.payment_method AS "paymentMethod", s.status,
+                  s.total_cents AS "totalCents", s.created_at AS "createdAt",
+                    CASE WHEN s.status = 'failed' THEN settlement.last_error END AS "failureReason",
+                    s.payer_name AS "payerName",
+                    s.payer_phone AS "payerPhone",
+                  settlement.id AS "settlementId",
+                  settlement.status AS "settlementStatus",
+                  settlement.last_error AS "settlementError",
+                  settlement.attempt_count AS "settlementAttemptCount",
+                  settlement.next_attempt_at AS "nextRetryAt"
+           FROM sales s
+           LEFT JOIN payassure_settlements settlement ON settlement.sale_id = s.id
+           WHERE (s.created_at >= CURRENT_DATE
+                  AND s.created_at < CURRENT_DATE + INTERVAL '1 day')
+              OR settlement.status IN (
+                'queued', 'processing', 'accepted', 'failed', 'retrying',
+                'partially_failed', 'awaiting_reconciliation'
+              )
+           UNION ALL
+           SELECT ('failed-' || id)::text AS id, payment_method AS "paymentMethod",
+                  'failed' AS status, total_cents AS "totalCents",
+                  created_at AS "createdAt", failure_reason AS "failureReason",
+                  NULL::text AS "payerName", NULL::text AS "payerPhone",
+                  NULL::integer AS "settlementId", NULL::text AS "settlementStatus",
+                  NULL::text AS "settlementError", NULL::integer AS "settlementAttemptCount",
+                  NULL::timestamptz AS "nextRetryAt"
+           FROM failed_checkout_attempts
+           WHERE created_at >= CURRENT_DATE
+             AND created_at < CURRENT_DATE + INTERVAL '1 day'
+         ) AS recent_transactions
+         ORDER BY CASE WHEN status = 'pending'
+                          OR "settlementStatus" IN (
+                            'queued', 'processing', 'accepted', 'failed', 'retrying',
+                            'partially_failed', 'awaiting_reconciliation'
+                          )
+                       THEN 0 ELSE 1 END,
+                  "createdAt" DESC
+         LIMIT 50`,
       ),
     ]);
 

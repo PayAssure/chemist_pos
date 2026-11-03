@@ -28,6 +28,19 @@ export type Supplier = {
   name: string;
   merchantId: string | null;
   payassureEnrolled: boolean;
+  contactName: string;
+  phone: string;
+  email: string;
+  address: string;
+};
+
+export type PayassureDirectorySupplier = {
+  name: string;
+  merchantId: string;
+  contactName: string;
+  phone: string;
+  email: string;
+  address: string;
 };
 
 export type Batch = {
@@ -67,12 +80,26 @@ export type Sale = {
 export type DashboardTransaction = {
   id: string;
   paymentMethod: "cash" | "mpesa" | "credit";
-  status: "completed" | "failed";
+  status: "completed" | "pending" | "failed";
   totalCents: number | null;
   createdAt: string;
   failureReason: string | null;
   payerName: string | null;
   payerPhone: string | null;
+  settlementId: number | null;
+  settlementStatus:
+    | "queued"
+    | "processing"
+    | "accepted"
+    | "failed"
+    | "retrying"
+    | "partially_failed"
+    | "awaiting_reconciliation"
+    | "completed"
+    | null;
+  settlementError: string | null;
+  settlementAttemptCount: number | null;
+  nextRetryAt: string | null;
 };
 
 export type SupplierCost = {
@@ -111,7 +138,8 @@ export type PayassureParticipant = {
   createdAt?: string;
   updatedAt?: string;
   integration?: {
-    id?: string | null;
+    apiKey?: string | null;
+    apiSecret?: string | null;
     merchantId?: string | null;
     environment?: string | null;
     isActive?: boolean | null;
@@ -143,7 +171,8 @@ export type RetailerPaymentData = {
 };
 
 export type RetailerIntegrationData = {
-  id: string;
+  apiKey: string;
+  apiSecret: string;
   merchantId: string;
   environment: string;
   isActive: boolean;

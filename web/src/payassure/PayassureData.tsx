@@ -45,6 +45,15 @@ function display(value: string | boolean | null | undefined): string {
   return value;
 }
 
+function displayDateTime(value: string): string {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return display(value);
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
 function PayassureData({ profile, loading, onSave }: PayassureDataProps) {
   const [editing, setEditing] = useState<CardSection | null>(null);
   const [draft, setDraft] = useState(profile);
@@ -175,6 +184,42 @@ function PayassureData({ profile, loading, onSave }: PayassureDataProps) {
         <article className="panel retailer-card">
           <div className="retailer-card-heading">
             <div>
+              <h2>PayAssure record</h2>
+              <p>Participant identity and onboarding state</p>
+            </div>
+          </div>
+          <dl className="retailer-fields">
+            <div className="retailer-field"><dt>Participant ID</dt><dd>{display(profile.id)}</dd></div>
+            <div className="retailer-field"><dt>Participant type</dt><dd>{display(profile.participantType)}</dd></div>
+            <div className="retailer-field"><dt>Onboarding status</dt><dd>{display(profile.status)}</dd></div>
+            <div className="retailer-field"><dt>Updated at</dt><dd>{displayDateTime(profile.updatedAt)}</dd></div>
+          </dl>
+        </article>
+
+        <article className="panel retailer-card">
+          <div className="retailer-card-heading">
+            <div>
+              <h2>Integration</h2>
+              <p>PayAssure merchant connection</p>
+            </div>
+          </div>
+          {profile.integration ? (
+            <dl className="retailer-fields">
+              <div className="retailer-field"><dt>API key</dt><dd>{display(profile.integration.apiKey)}</dd></div>
+              <div className="retailer-field"><dt>API secret</dt><dd>{display(profile.integration.apiSecret)}</dd></div>
+              <div className="retailer-field"><dt>Merchant ID</dt><dd>{display(profile.integration.merchantId)}</dd></div>
+              <div className="retailer-field"><dt>Environment</dt><dd>{display(profile.integration.environment)}</dd></div>
+              <div className="retailer-field"><dt>Integration active</dt><dd>{display(profile.integration.isActive)}</dd></div>
+              <div className="retailer-field"><dt>Created at</dt><dd>{displayDateTime(profile.integration.createdAt)}</dd></div>
+            </dl>
+          ) : (
+            <p className="retailer-empty">No integration was provided.</p>
+          )}
+        </article>
+
+        <article className="panel retailer-card">
+          <div className="retailer-card-heading">
+            <div>
               <h2>Settlement destination</h2>
               <p>Bank or M-Pesa payout details</p>
             </div>
@@ -199,42 +244,6 @@ function PayassureData({ profile, loading, onSave }: PayassureDataProps) {
             </dl>
           ) : (
             <p className="retailer-empty">No payout destination was provided.</p>
-          )}
-        </article>
-
-        <article className="panel retailer-card">
-          <div className="retailer-card-heading">
-            <div>
-              <h2>PayAssure record</h2>
-              <p>Participant identity and onboarding state</p>
-            </div>
-          </div>
-          <dl className="retailer-fields">
-            <div className="retailer-field"><dt>Participant ID</dt><dd>{display(profile.id)}</dd></div>
-            <div className="retailer-field"><dt>Participant type</dt><dd>{display(profile.participantType)}</dd></div>
-            <div className="retailer-field"><dt>Onboarding status</dt><dd>{display(profile.status)}</dd></div>
-            <div className="retailer-field"><dt>Created at</dt><dd>{display(profile.createdAt)}</dd></div>
-            <div className="retailer-field"><dt>Updated at</dt><dd>{display(profile.updatedAt)}</dd></div>
-          </dl>
-        </article>
-
-        <article className="panel retailer-card">
-          <div className="retailer-card-heading">
-            <div>
-              <h2>Integration</h2>
-              <p>PayAssure merchant connection</p>
-            </div>
-          </div>
-          {profile.integration ? (
-            <dl className="retailer-fields">
-              <div className="retailer-field"><dt>Integration ID</dt><dd>{display(profile.integration.id)}</dd></div>
-              <div className="retailer-field"><dt>Merchant ID</dt><dd>{display(profile.integration.merchantId)}</dd></div>
-              <div className="retailer-field"><dt>Environment</dt><dd>{display(profile.integration.environment)}</dd></div>
-              <div className="retailer-field"><dt>Integration active</dt><dd>{display(profile.integration.isActive)}</dd></div>
-              <div className="retailer-field"><dt>Created at</dt><dd>{display(profile.integration.createdAt)}</dd></div>
-            </dl>
-          ) : (
-            <p className="retailer-empty">No integration was provided.</p>
           )}
         </article>
       </div>

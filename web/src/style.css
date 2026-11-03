@@ -95,6 +95,8 @@ h1 { font-size: 38px; font-weight: 800; letter-spacing: -.04em; margin-bottom: 5
 .button-secondary { color: var(--green); background: var(--green-light); }
 .button-quiet { color: #46544d; background: transparent; border: 1px solid var(--border); min-height: 38px; font-size: 14px; }
 .pay-button { width: 100%; margin-bottom: 9px; }
+.checkout-spinner { display: inline-block; width: 15px; height: 15px; margin-right: 9px; vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: checkout-spin .7s linear infinite; }
+@keyframes checkout-spin { to { transform: rotate(360deg); } }
 .helper-text { font-size: 13px; line-height: 1.5; color: var(--muted); margin: 4px 0 0; }
 .prescription-field { margin: 0 0 12px; }
 .prescription-field .helper-text { font-weight: 400; }
@@ -182,6 +184,7 @@ h1 { font-size: 38px; font-weight: 800; letter-spacing: -.04em; margin-bottom: 5
   width: min(100%, 680px); max-height: min(90vh, 900px); overflow-y: auto;
   box-shadow: 0 24px 80px rgb(0 0 0 / 24%);
 }
+.checkout-mpesa-modal { width: min(100%, 520px); box-shadow: 0 24px 80px rgb(0 0 0 / 24%); }
 .inventory-modal label { color: var(--green-dark); font-weight: 800; }
 .inventory-modal input:not([type="checkbox"]),
 .inventory-modal select,
@@ -218,6 +221,25 @@ td { padding: 17px 14px; border-top: 1px solid #f0f2f1; font-size: 15px; font-we
 td strong { font-weight: 700; }
 .stock-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.supplier-identity-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, auto); align-items: end; gap: 18px; }
+.supplier-name-field { min-width: 0; }
+.supplier-source-control { display: flex; flex-direction: column; gap: 7px; }
+.supplier-source-control > span { font-size: 13px; font-weight: 700; }
+.supplier-source-buttons { display: flex; gap: 7px; }
+.supplier-source-buttons .button { white-space: nowrap; }
+.supplier-directory { display: flex; flex-direction: column; gap: 8px; }
+.supplier-directory-results { display: flex; max-height: 240px; flex-direction: column; overflow-y: auto; border: 1px solid var(--border); border-radius: 9px; }
+.supplier-directory-option { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 11px 13px; border: 0; border-bottom: 1px solid var(--border); background: #fff; color: inherit; text-align: left; }
+.supplier-directory-option:last-child { border-bottom: 0; }
+.supplier-directory-option:hover, .supplier-directory-option:focus-visible { background: var(--green-light); }
+.supplier-directory-option span { color: var(--muted); font-size: 13px; }
+.supplier-selected-details dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 0; }
+.supplier-selected-details dl > div { min-width: 0; }
+.supplier-selected-details dt { color: var(--muted); font-size: 12px; font-weight: 700; }
+.supplier-selected-details dd { margin: 2px 0 0; overflow-wrap: anywhere; font-size: 14px; }
+.supplier-directory-error { margin: 0; }
+.supplier-selection-error { color: #98352c; }
+.supplier-contact-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .form-panel { display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
 .form-panel .panel-heading { margin-bottom: 2px; }
 label { display: flex; flex-direction: column; gap: 7px; color: #35433b; font-size: 15px; font-weight: 700; }
@@ -271,6 +293,9 @@ input:focus, select:focus, textarea:focus { border-color: #69a184; box-shadow: 0
   .summary-card { min-width: 118px; padding: 12px; }
   .summary-card strong { font-size: 19px; }
   .checkout-layout { grid-template-columns: 1fr; }
+  .supplier-identity-row { grid-template-columns: 1fr; }
+  .supplier-contact-fields { grid-template-columns: 1fr; }
+  .supplier-selected-details dl { grid-template-columns: 1fr; }
   .support-request { align-items: stretch; flex-direction: column; }
   .inventory-toolbar-controls { width: 100%; flex-wrap: nowrap; gap: 8px; }
   .inventory-search { flex: 1 1 0; max-width: none; }
