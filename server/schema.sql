@@ -142,8 +142,6 @@ CREATE TABLE IF NOT EXISTS sales (
   total_cents INTEGER NOT NULL CHECK (total_cents > 0),
   payer_name TEXT,
   payer_phone TEXT,
-  prescription_reference TEXT,
-  prescription_checked_by TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -152,8 +150,8 @@ ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check
   CHECK (payment_method IN ('cash', 'mpesa', 'credit'));
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS payer_name TEXT;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS payer_phone TEXT;
-ALTER TABLE sales ADD COLUMN IF NOT EXISTS prescription_reference TEXT;
-ALTER TABLE sales ADD COLUMN IF NOT EXISTS prescription_checked_by TEXT;
+ALTER TABLE sales DROP COLUMN IF EXISTS prescription_reference;
+ALTER TABLE sales DROP COLUMN IF EXISTS prescription_checked_by;
 
 DO $$
 BEGIN

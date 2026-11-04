@@ -6,7 +6,18 @@ import {
   randomUUID,
 } from "node:crypto";
 import type { PoolClient } from "pg";
+import { Agent, buildConnector, fetch as undiciFetch } from "undici";
+import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { pool } from "./db";
+
+const payassureAgent = new Agent({ connect: buildConnector({ family: 4, port: 443 }) });
+
+function fetchPayassure(
+  url: string,
+  init: UndiciRequestInit,
+): Promise<UndiciResponse> {
+  return undiciFetch(url, { ...init, dispatcher: payassureAgent });
+}
 
 type PayassureTokens = {
   accessToken: string;
@@ -95,7 +106,7 @@ function transportErrorDetails(error: unknown): Record<string, unknown> {
   return details;
 }
 
-function responseMetadata(response: Response, body: unknown): Record<string, unknown> {
+function responseMetadata(response: UndiciResponse, body: unknown): Record<string, unknown> {
   const requestId =
     response.headers.get("x-request-id") ?? response.headers.get("request-id");
   return {
@@ -151,7 +162,7 @@ function decrypt(value: string | null): string | null {
 async function requestJson<T>(
   operation: "login" | "refresh",
   url: string,
-  init: RequestInit,
+  init: UndiciRequestInit,
   safePayload: Record<string, unknown>,
 ): Promise<T> {
   const requestId = randomUUID();
@@ -163,9 +174,9 @@ async function requestJson<T>(
     url: safeEndpoint(url),
     payload: safePayload,
   });
-  let response: Response;
+  let response: UndiciResponse;
   try {
-    response = await fetch(url, {
+    response = await fetchPayassure(url, {
       ...init,
       signal: AbortSignal.timeout(15000),
       headers: { "Content-Type": "application/json", ...init.headers },
@@ -319,7 +330,7 @@ async function requestParticipant(
   const config = getConfig();
   let session = await currentPayassureSession();
   const participantUrl = `${config.baseUrl}${endpoint}`;
-  async function fetchParticipant(): Promise<Response> {
+  async function fetchParticipant(): Promise<UndiciResponse> {
     const requestId = randomUUID();
     console.info("[PayAssure] Sending request", {
       requestId,
@@ -338,7 +349,7 @@ async function requestParticipant(
         : {}),
     });
     try {
-      const participantResponse = await fetch(participantUrl, {
+      const participantResponse = await fetchPayassure(participantUrl, {
         method,
         headers: {
           Authorization: `Bearer ${session.accessToken}`,
@@ -402,15 +413,37 @@ export function getPayassureParticipant(): Promise<unknown> {
 }
 
 export function getPayassureWebhookUrl(): string | null {
-  if (!process.env.PAYASSURE_API_BASE_URL?.trim()) return null;
-  const config = getConfig();
-  return `${config.baseUrl}/webhook`;
+  const configuredUrl = process.env.PAYASSURE_WEBHOOK_URL?.trim();
+  if (!configuredUrl) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(configuredUrl);
+  } catch {
+    throw new Error("PAYASSURE_WEBHOOK_URL must be an absolute HTTPS URL ending in /webhook");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    parsed.pathname !== "/webhook"
+  ) {
+    throw new Error("PAYASSURE_WEBHOOK_URL must be an absolute HTTPS URL ending in /webhook");
+  }
+  return parsed.toString().replace(/\/$/, "");
+}
+
+let registeredPayassureWebhookUrl: string | null = null;
+
+export function getRegisteredPayassureWebhookUrl(): string | null {
+  return registeredPayassureWebhookUrl;
 }
 
 export async function registerPayassureWebhookUrl(): Promise<void> {
-  const webhookUrl = getPayassureWebhookUrl();
-  if (!webhookUrl) return;
-
+  registeredPayassureWebhookUrl = null;
+  const fallbackWebhookUrl = getPayassureWebhookUrl();
   const participantValue = await getPayassureParticipant();
   const participant = Array.isArray(participantValue) ? participantValue[0] : participantValue;
   if (!participant || typeof participant !== "object") {
@@ -420,9 +453,23 @@ export async function registerPayassureWebhookUrl(): Promise<void> {
   if (typeof participantId !== "string" || !participantId) {
     throw new Error("PayAssure retailer profile did not include a participant ID");
   }
-  const integration = (participant as Record<string, unknown>).integration;
-  if (integration && typeof integration === "object") {
-    const details = integration as Record<string, unknown>;
+  const participantRecord = participant as Record<string, unknown>;
+  const integration = participantRecord.integration;
+  const integrationDetails =
+    integration && typeof integration === "object"
+      ? integration as Record<string, unknown>
+      : null;
+  const participantWebhookUrl =
+    typeof participantRecord.webhookUrl === "string" && participantRecord.webhookUrl.trim()
+      ? participantRecord.webhookUrl.trim()
+      : null;
+  const integrationWebhookUrl =
+    typeof integrationDetails?.webhookUrl === "string" && integrationDetails.webhookUrl.trim()
+      ? integrationDetails.webhookUrl.trim()
+      : null;
+
+  if (integrationDetails) {
+    const details = integrationDetails;
     if (
       typeof details.merchantId === "string" &&
       typeof details.apiSecret === "string" &&
@@ -432,11 +479,84 @@ export async function registerPayassureWebhookUrl(): Promise<void> {
     }
   }
 
-  await requestParticipant(
-    "PATCH",
-    { webhookUrl },
-    `/onbordings/${encodeURIComponent(participantId)}/webhook`,
-  );
+  if (fallbackWebhookUrl) {
+    console.info("[PayAssure] Registering participant fallback webhook endpoint", {
+      endpoint: safeEndpoint(fallbackWebhookUrl),
+      status: "registering",
+    });
+    try {
+      await requestParticipant(
+        "PATCH",
+        { webhookUrl: fallbackWebhookUrl },
+        `/onbordings/${encodeURIComponent(participantId)}/webhook`,
+      );
+    } catch (error) {
+      console.error("[PayAssure] Participant fallback webhook registration failed", {
+        endpoint: safeEndpoint(fallbackWebhookUrl),
+        status: "failed",
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      throw error;
+    }
+    console.info("[PayAssure] Participant fallback webhook endpoint registered", {
+      endpoint: safeEndpoint(fallbackWebhookUrl),
+      status: "registered",
+    });
+  }
+
+  const participantFallbackUrl = fallbackWebhookUrl ?? participantWebhookUrl;
+  const effectiveUrl = integrationWebhookUrl ?? participantFallbackUrl;
+  if (!effectiveUrl) {
+    console.error("[PayAssure] No effective webhook endpoint is configured", {
+      status: "not_configured",
+    });
+    throw new Error(
+      "Configure PAYASSURE_WEBHOOK_URL or set a PayAssure participant/integration webhook URL before checkout",
+    );
+  }
+
+  let parsedEffectiveUrl: URL;
+  try {
+    parsedEffectiveUrl = new URL(effectiveUrl);
+  } catch {
+    throw new Error("The effective PayAssure webhook URL is invalid");
+  }
+  if (
+    parsedEffectiveUrl.protocol !== "https:" ||
+    parsedEffectiveUrl.username ||
+    parsedEffectiveUrl.password ||
+    parsedEffectiveUrl.search ||
+    parsedEffectiveUrl.hash ||
+    parsedEffectiveUrl.pathname !== "/webhook"
+  ) {
+    throw new Error("The effective PayAssure webhook URL must be HTTPS and end in /webhook");
+  }
+  const normalizedEffectiveUrl = parsedEffectiveUrl.toString().replace(/\/$/, "");
+  if (
+    integrationWebhookUrl &&
+    participantFallbackUrl &&
+    normalizedEffectiveUrl !== participantFallbackUrl
+  ) {
+    console.error("[PayAssure] Integration webhook URL overrides the participant fallback", {
+      fallbackEndpoint: safeEndpoint(participantFallbackUrl),
+      effectiveEndpoint: safeEndpoint(normalizedEffectiveUrl),
+      status: "endpoint_mismatch",
+    });
+    throw new Error(
+      "The integration-specific PayAssure webhook URL overrides the participant fallback and must point to the same receiver",
+    );
+  }
+
+  registeredPayassureWebhookUrl = normalizedEffectiveUrl;
+  console.info("[PayAssure] Effective webhook endpoint selected", {
+    endpoint: safeEndpoint(normalizedEffectiveUrl),
+    source: integrationWebhookUrl
+      ? "integration"
+      : fallbackWebhookUrl
+        ? "participant_fallback"
+        : "existing_participant",
+    status: "ready",
+  });
 }
 
 const webhookSecretCache = new Map<string, { secret: string; expiresAt: number }>();
@@ -505,7 +625,7 @@ export async function getPayassureSupplierDirectory(): Promise<unknown> {
   let session = await currentPayassureSession();
   const supplierDirectoryUrl = `${config.baseUrl}/supplier/directory`;
 
-  async function fetchDirectory(): Promise<Response> {
+  async function fetchDirectory(): Promise<UndiciResponse> {
     const requestId = randomUUID();
     console.info("[PayAssure] Sending request", {
       requestId,
@@ -515,7 +635,7 @@ export async function getPayassureSupplierDirectory(): Promise<unknown> {
       authorization: "******",
     });
     try {
-      const response = await fetch(supplierDirectoryUrl, {
+      const response = await fetchPayassure(supplierDirectoryUrl, {
         method: "GET",
         headers: { Authorization: `Bearer ${session.accessToken}`, Accept: "application/json" },
         signal: AbortSignal.timeout(15000),
@@ -564,6 +684,118 @@ export async function getPayassureSupplierDirectory(): Promise<unknown> {
         : 0,
   });
   return body;
+}
+
+async function requestRetailerFloat(
+  operation: "retailer-float" | "retailer-float-balance" | "retailer-float-deposit",
+  method: "GET" | "POST",
+  endpoint: string,
+  payload?: Record<string, unknown>,
+): Promise<unknown> {
+  const config = getConfig();
+  let session = await currentPayassureSession();
+  const endpointUrl = `${config.baseUrl}${endpoint}`;
+
+  async function fetchFloat(): Promise<UndiciResponse> {
+    const requestId = randomUUID();
+    console.info("[PayAssure] Sending request", {
+      requestId,
+      operation,
+      method,
+      url: safeEndpoint(endpointUrl),
+      authorization: "******",
+      ...(payload
+        ? {
+            payload: {
+              ...payload,
+              ...(typeof payload.payerPhoneNumber === "string"
+                ? { payerPhoneNumber: "[REDACTED]" }
+                : {}),
+            },
+          }
+        : {}),
+    });
+    try {
+      const response = await fetchPayassure(endpointUrl, {
+        method,
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+          Accept: "application/json",
+          ...(payload ? { "Content-Type": "application/json" } : {}),
+        },
+        ...(payload ? { body: JSON.stringify(payload) } : {}),
+        signal: AbortSignal.timeout(15000),
+      });
+      console.info("[PayAssure] Received response", {
+        requestId,
+        operation,
+        ...responseMetadata(response, null),
+      });
+      return response;
+    } catch (error) {
+      console.error("[PayAssure] Request failed before receiving an HTTP response", {
+        requestId,
+        operation,
+        method,
+        url: safeEndpoint(endpointUrl),
+        ...transportErrorDetails(error),
+      });
+      throw error;
+    }
+  }
+
+  let response = await fetchFloat();
+  if (response.status === 401) {
+    await refreshPayassureSession();
+    session = await currentPayassureSession();
+    response = await fetchFloat();
+  }
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = (body as { message?: string } | null)?.message;
+    console.error("[PayAssure] Retailer float request returned an error", {
+      operation,
+      status: response.status,
+      response: responseSummary(body),
+    });
+    throw new PayassureHttpError(
+      response.status,
+      message ?? `PayAssure retailer float request failed (${response.status})`,
+    );
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("PayAssure retailer float request returned an invalid response");
+  }
+  console.info("[PayAssure] Retailer float data received", {
+    operation,
+    response: responseSummary(body),
+  });
+  return body;
+}
+
+export function getPayassureRetailerFloat(): Promise<unknown> {
+  return requestRetailerFloat("retailer-float", "GET", "/escrow/retailer/float");
+}
+
+export function checkPayassureRetailerFloatBalance(): Promise<unknown> {
+  return requestRetailerFloat(
+    "retailer-float-balance",
+    "POST",
+    "/escrow/retailer/float/balance",
+  );
+}
+
+export function initiatePayassureRetailerFloatDeposit(
+  amount: number,
+  payerPhoneNumber: string,
+): Promise<unknown> {
+  return requestRetailerFloat(
+    "retailer-float-deposit",
+    "POST",
+    "/escrow/retailer/float/deposits",
+    { amount, payerPhoneNumber },
+  );
 }
 
 type RetailerIntegrationCredentials = {
@@ -630,9 +862,9 @@ async function settlementRequest(
     payload: safePayload,
   });
 
-  let response: Response;
+  let response: UndiciResponse;
   try {
-    response = await fetch(url, {
+    response = await fetchPayassure(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,

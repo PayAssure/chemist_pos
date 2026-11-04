@@ -26,9 +26,6 @@ function SalesHistory({ sales }: SalesHistoryProps) {
                   </li>
                 ))}
               </ul>
-              {sale.prescriptionReference && (
-                <p className="helper-text">Prescription {sale.prescriptionReference} checked by {sale.prescriptionCheckedBy ?? "staff"}</p>
-              )}
             </article>
           ))}
         </div>

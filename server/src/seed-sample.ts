@@ -184,23 +184,17 @@ async function seedDashboardSampleData(client: PoolClient): Promise<void> {
     const paymentMethod = index >= 8 ? "credit" : "cash";
     const payerName = paymentMethod === "credit" ? `Demo Dashboard Payer ${index - 7}` : null;
     const payerPhone = paymentMethod === "credit" ? `000000000${index - 7}` : null;
-    const prescriptionReference = product.prescription_required
-      ? `DEMO-DASHBOARD-RX-${String(index + 1).padStart(2, "0")}`
-      : null;
     const sale = await client.query(
       `INSERT INTO sales
-         (payment_method, status, total_cents, payer_name, payer_phone,
-          prescription_reference, prescription_checked_by, created_at)
-       VALUES ($1, 'completed', $2, $3, $4, $5, $6,
-               NOW() - ($7 * INTERVAL '2 minutes'))
+         (payment_method, status, total_cents, payer_name, payer_phone, created_at)
+       VALUES ($1, 'completed', $2, $3, $4,
+               NOW() - ($5 * INTERVAL '2 minutes'))
        RETURNING id`,
       [
         paymentMethod,
         Number(product.price_cents) * quantity,
         payerName,
         payerPhone,
-        prescriptionReference,
-        prescriptionReference ? users.rows[index % users.rowCount].email : null,
         products.rows.length - index,
       ],
     );
@@ -424,20 +418,15 @@ async function seedSampleData(): Promise<void> {
         (sum, item) => sum + item.quantity * item.medicine.priceCents,
         0,
       );
-      const prescriptionRequired = saleItems.some(
-        (item) => item.medicine.prescriptionRequired,
-      );
       const paymentMethod = saleIndex >= transactionCount - 4 ? "credit" : "cash";
       const createdAt = new Date(
         startTime + randomInt(0, 90 * 86_400_000),
       ).toISOString();
-      const checkedBy = userRows[saleIndex % userRows.length];
       const sale = await client.query(
         `INSERT INTO sales
-           (payment_method, status, total_cents, payer_name, payer_phone,
-            prescription_reference, prescription_checked_by, created_at)
-         VALUES ($1, 'completed', $2, $3, $4, $5, $6,
-                 CASE WHEN $7 THEN NOW() ELSE $8::timestamptz END) RETURNING id`,
+           (payment_method, status, total_cents, payer_name, payer_phone, created_at)
+         VALUES ($1, 'completed', $2, $3, $4,
+                 CASE WHEN $5 THEN NOW() ELSE $6::timestamptz END) RETURNING id`,
         [
           paymentMethod,
           totalCents,
@@ -445,10 +434,6 @@ async function seedSampleData(): Promise<void> {
           paymentMethod === "credit"
             ? String(saleIndex + 1).padStart(10, "0")
             : null,
-          prescriptionRequired
-            ? `DEMO-RX-${String(saleIndex + 1).padStart(5, "0")}`
-            : null,
-          prescriptionRequired ? checkedBy.email : null,
           isTodaySale,
           createdAt,
         ],

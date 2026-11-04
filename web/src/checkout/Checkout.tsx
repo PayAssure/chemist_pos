@@ -6,15 +6,13 @@ type CheckoutProps = {
   products: Product[];
   cartItems: CartItem[];
   total: number;
-  prescriptionRequired: boolean;
-  prescriptionReference: string;
   payerName: string;
   payerPhone: string;
   onCartChange: Dispatch<SetStateAction<Record<number, number>>>;
-  onPrescriptionReferenceChange: (value: string) => void;
   onPayerNameChange: (value: string) => void;
   onPayerPhoneChange: (value: string) => void;
   isCheckingOut: boolean;
+  checkoutStage: "initiating" | "waiting" | null;
   onCheckout: (paymentMethod: "cash" | "mpesa" | "credit", payerPhone?: string) => Promise<boolean>;
 };
 
@@ -22,15 +20,13 @@ function Checkout({
   products,
   cartItems,
   total,
-  prescriptionRequired,
-  prescriptionReference,
   payerName,
   payerPhone,
   onCartChange,
-  onPrescriptionReferenceChange,
   onPayerNameChange,
   onPayerPhoneChange,
   isCheckingOut,
+  checkoutStage,
   onCheckout,
 }: CheckoutProps) {
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "credit">("cash");
@@ -39,6 +35,10 @@ function Checkout({
   const [mpesaModalOpen, setMpesaModalOpen] = useState(false);
   const creditDetailsMissing =
     !payerName.trim() || payerPhone.replace(/\D/g, "").length < 7;
+  const checkoutProgressLabel =
+    checkoutStage === "initiating"
+      ? "Initiating payment…"
+      : "Waiting for PayAssure webhook…";
   const searchTerms = productSearch.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const matchingProducts = products.filter((product) => {
     const searchableText = [
@@ -153,20 +153,6 @@ function Checkout({
           </div>
         )}
         <div className="total-row"><span>Total</span><strong>{money(total)}</strong></div>
-        {prescriptionRequired && (
-          <label className="prescription-field">
-            Prescription reference
-            <input
-              value={prescriptionReference}
-              disabled={isCheckingOut}
-              onChange={(event) => onPrescriptionReferenceChange(event.target.value)}
-              required
-              maxLength={120}
-              placeholder="Enter prescription reference"
-            />
-            <span className="helper-text">Confirm the prescription before completing this sale.</span>
-          </label>
-        )}
         <label className="prescription-field">
           Payment method
           <select
@@ -218,19 +204,18 @@ function Checkout({
           disabled={
             isCheckingOut ||
             cartItems.length === 0 ||
-            (paymentMethod === "credit" && creditDetailsMissing) ||
-            (prescriptionRequired && !prescriptionReference.trim())
+            (paymentMethod === "credit" && creditDetailsMissing)
           }
           onClick={() => onCheckout(paymentMethod)}
           aria-busy={isCheckingOut}
         >
-          {isCheckingOut ? <><span className="checkout-spinner" aria-hidden="true" />Waiting for PayAssure…</> : paymentMethod === "credit" ? "Complete sale on credit" : "Complete cash sale"}
+          {isCheckingOut ? <><span className="checkout-spinner" aria-hidden="true" />{checkoutProgressLabel}</> : paymentMethod === "credit" ? "Complete sale on credit" : "Complete cash sale"}
         </button>
         <button
           className="button button-secondary pay-button"
-          disabled={isCheckingOut || cartItems.length === 0 || (prescriptionRequired && !prescriptionReference.trim())}
+          disabled={isCheckingOut || cartItems.length === 0}
           onClick={() => setMpesaModalOpen(true)}
-        >{isCheckingOut ? "Waiting for PayAssure…" : "Pay with M-Pesa"}</button>
+        >{isCheckingOut ? checkoutProgressLabel : "Pay with M-Pesa"}</button>
         <p className="helper-text">Credit sales require the payer’s name and phone number. All sales are saved only after PayAssure accepts the payment.</p>
       </aside>
       {mpesaModalOpen && (
@@ -269,7 +254,7 @@ function Checkout({
               <div className="modal-actions">
                 <button className="button button-secondary" type="button" disabled={isCheckingOut} onClick={() => setMpesaModalOpen(false)}>Cancel</button>
                 <button className="button button-primary" type="submit" disabled={isCheckingOut} aria-busy={isCheckingOut}>
-                  {isCheckingOut ? <><span className="checkout-spinner" aria-hidden="true" />Waiting for PayAssure…</> : "Initiate M-Pesa payment"}
+                  {isCheckingOut ? <><span className="checkout-spinner" aria-hidden="true" />{checkoutProgressLabel}</> : "Initiate M-Pesa payment"}
                 </button>
               </div>
             </form>

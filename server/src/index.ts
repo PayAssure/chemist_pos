@@ -12,11 +12,15 @@ import { z } from "zod";
 import { requireAuth } from "./auth";
 import { initializeDatabase, pool } from "./db";
 import {
+  checkPayassureRetailerFloatBalance,
+  getPayassureRetailerFloat,
   getPayassureSupplierDirectory,
   getPayassureParticipant,
+  initiatePayassureRetailerFloatDeposit,
   initiatePayassureSettlement,
   isPayassureConfigured,
   PayassureHttpError,
+  getRegisteredPayassureWebhookUrl,
   getPayassureWebhookSecret,
   registerPayassureWebhookUrl,
   type PayassureSettlementPayload,
@@ -155,7 +159,6 @@ const checkoutSchema = z.object({
   merchantTransactionReference: z.string().trim().min(1).max(120).optional(),
   payerName: z.string().trim().max(120).optional(),
   payerPhone: z.string().trim().max(30).optional(),
-  prescriptionReference: z.string().trim().max(120).optional(),
   items: z
     .array(
       z.object({
@@ -216,6 +219,32 @@ const payassureParticipantUpdateSchema = z.object({
   settlementAccount: z.string().trim().max(120).optional(),
   payment: payassurePaymentUpdateSchema.optional(),
 }).strict().refine((participant) => Object.keys(participant).length > 0);
+const retailerFloatDepositRequestSchema = z.object({
+  amount: z.number().int().positive().max(2147483647),
+  payerPhoneNumber: z.string().trim().min(1).max(30),
+}).strict();
+const retailerFloatBalanceSchema = z.object({
+  merchantId: z.string().min(1),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  depositedBalance: z.number(),
+  paidOutBalance: z.number(),
+  reservedBalance: z.number(),
+  availableBalance: z.number(),
+});
+const retailerFloatSchema = retailerFloatBalanceSchema.extend({
+  dailyFloat: z.number(),
+  updatedAt: z.string(),
+}).passthrough();
+const retailerFloatCheckSchema = retailerFloatBalanceSchema.extend({
+  asOf: z.string(),
+}).passthrough();
+const retailerFloatDepositSchema = z.object({
+  depositId: z.string().min(1),
+  merchantId: z.string().min(1),
+  amount: z.number(),
+  payerPhoneNumber: z.string().min(1),
+  status: z.string().min(1),
+}).passthrough();
 
 function safePayassureParticipant(value: unknown): unknown {
   function sanitize(participantValue: unknown): unknown {
@@ -360,6 +389,55 @@ app.get("/api/payassure/me", requireAuth, async (_req, res) => {
   } catch (error) {
     res.status(isPayassureConfigured() ? 502 : 503).json({
       error: error instanceof Error ? error.message : "Could not load PayAssure participant",
+    });
+  }
+});
+
+app.get("/api/payassure/float", requireAuth, async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    res.json(retailerFloatSchema.parse(await getPayassureRetailerFloat()));
+  } catch (error) {
+    const upstreamClientError =
+      error instanceof PayassureHttpError && [401, 403, 404].includes(error.status);
+    res.status(upstreamClientError ? error.status : isPayassureConfigured() ? 502 : 503).json({
+      error: error instanceof Error ? error.message : "Could not load PayAssure float",
+    });
+  }
+});
+
+app.post("/api/payassure/float/balance", requireAuth, async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    res.json(retailerFloatCheckSchema.parse(await checkPayassureRetailerFloatBalance()));
+  } catch (error) {
+    const upstreamClientError =
+      error instanceof PayassureHttpError && [401, 403, 404].includes(error.status);
+    res.status(upstreamClientError ? error.status : isPayassureConfigured() ? 502 : 503).json({
+      error: error instanceof Error ? error.message : "Could not check PayAssure float balance",
+    });
+  }
+});
+
+app.post("/api/payassure/float/deposits", requireAuth, async (req, res) => {
+  const parsed = retailerFloatDepositRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "Provide a positive whole-KES amount and a valid payer phone number",
+    });
+    return;
+  }
+  try {
+    const deposit = await initiatePayassureRetailerFloatDeposit(
+      parsed.data.amount,
+      parsed.data.payerPhoneNumber,
+    );
+    res.status(201).json(retailerFloatDepositSchema.parse(deposit));
+  } catch (error) {
+    const upstreamClientError =
+      error instanceof PayassureHttpError && [400, 401, 403, 404, 409].includes(error.status);
+    res.status(upstreamClientError ? error.status : isPayassureConfigured() ? 502 : 503).json({
+      error: error instanceof Error ? error.message : "Could not submit PayAssure float deposit",
     });
   }
 });
@@ -921,7 +999,6 @@ function checkoutRequestFingerprint(
       .map(([productId, quantity]) => ({ productId, quantity })),
     payerName: checkout.payerName?.trim() ?? null,
     payerPhone: normalizedMpesaPhone ?? checkout.payerPhone?.trim() ?? null,
-    prescriptionReference: checkout.prescriptionReference?.trim() ?? null,
   };
   return createHash("sha256").update(JSON.stringify(details)).digest("hex");
 }
@@ -1341,10 +1418,28 @@ app.post("/webhook", async (req, res, next) => {
     return;
   }
 
+  const webhookContext = {
+    endpoint: "/webhook",
+    eventId: event.id,
+    eventType: event.type,
+    merchantTransactionReference: event.merchantTransactionReference,
+    providerSettlementId: event.settlementId,
+    recipientMerchantId: event.recipientMerchantId,
+  };
+  console.info("[PayAssure] Webhook received", {
+    ...webhookContext,
+    status: "received",
+  });
+
   let client: PoolClient;
   try {
     client = await pool.connect();
   } catch (error) {
+    console.error("[PayAssure] Webhook could not be processed because the database is unavailable", {
+      ...webhookContext,
+      status: "processing_failed",
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
     next(error);
     return;
   }
@@ -1365,11 +1460,28 @@ app.post("/webhook", async (req, res, next) => {
     );
     if (!recorded.rowCount) {
       await client.query("COMMIT");
+      console.info("[PayAssure] Duplicate webhook ignored", {
+        ...webhookContext,
+        status: "duplicate",
+      });
       res.status(200).json({ received: true, duplicate: true });
       return;
     }
 
     await applyPayassureWebhookEvent(client, event);
+    const checkoutStatus = await client.query<{
+      saleStatus: string;
+      settlementStatus: string;
+      collectionStatus: string;
+    }>(
+      `SELECT sale.status AS "saleStatus",
+              settlement.status AS "settlementStatus",
+              settlement.collection_status AS "collectionStatus"
+       FROM sales sale
+       JOIN payassure_settlements settlement ON settlement.sale_id = sale.id
+       WHERE settlement.merchant_transaction_reference = $1`,
+      [event.merchantTransactionReference],
+    );
     await client.query(
       `UPDATE payassure_webhook_events
        SET status = 'processed', processed_at = NOW()
@@ -1377,6 +1489,11 @@ app.post("/webhook", async (req, res, next) => {
       [recorded.rows[0].id],
     );
     await client.query("COMMIT");
+    console.info("[PayAssure] Webhook processed", {
+      ...webhookContext,
+      status: "processed",
+      ...(checkoutStatus.rows[0] ?? {}),
+    });
     res.status(200).json({ received: true });
   } catch (error) {
     try {
@@ -1384,6 +1501,12 @@ app.post("/webhook", async (req, res, next) => {
     } catch (rollbackError) {
       console.error("[PayAssure] Could not roll back webhook transaction", rollbackError);
     }
+    console.error("[PayAssure] Webhook processing failed", {
+      ...webhookContext,
+      status: "processing_failed",
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : "Unknown webhook processing error",
+    });
     const status = error && typeof error === "object" && "status" in error
       ? Number((error as { status: unknown }).status)
       : 500;
@@ -1412,6 +1535,14 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       }
     }
     res.status(400).json({ error: "Provide one or more valid checkout items" });
+    return;
+  }
+
+  if (!getRegisteredPayassureWebhookUrl()) {
+    res.status(503).json({
+      code: "PAYASSURE_WEBHOOK_NOT_READY",
+      error: "The PayAssure webhook receiver has not been configured for this server session. Sign out and sign in again before checkout.",
+    });
     return;
   }
 
@@ -1448,6 +1579,34 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       return;
     }
     const checkout = existingSale.rows[0];
+    if (checkout.settlementStatus === "queued" || checkout.settlementStatus === "failed") {
+      console.warn("[PayAssure] Existing checkout was not acknowledged; refusing to resubmit", {
+        reference: checkout.reference,
+        settlementStatus: checkout.settlementStatus,
+        collectionStatus: checkout.collectionStatus,
+      });
+      const unresolvedCollection = checkout.collectionStatus === "pending";
+      res.status(409).json({
+        code: unresolvedCollection
+          ? "CHECKOUT_COLLECTION_UNRESOLVED"
+          : "CHECKOUT_NOT_ACKNOWLEDGED",
+        error: unresolvedCollection
+          ? "The previous payment request was not acknowledged, but its collection is still pending. No new payment request was sent with this checkout reference."
+          : checkout.settlementStatus === "queued"
+          ? "This checkout has not been acknowledged by PayAssure. Do not retry it; verify its status before starting another checkout."
+          : checkout.settlementError ??
+            "PayAssure did not acknowledge this checkout. Verify its status before starting another checkout.",
+        reference: checkout.reference,
+        settlementStatus: checkout.settlementStatus,
+        collectionStatus: checkout.collectionStatus,
+      });
+      return;
+    }
+    console.info("[PayAssure] Reusing an already acknowledged checkout; not sending it again", {
+      reference: checkout.reference,
+      settlementStatus: checkout.settlementStatus,
+      collectionStatus: checkout.collectionStatus,
+    });
     res.status(checkout.collectionStatus === "pending" ? 202 : 200).json(checkout);
   }
 
@@ -1468,7 +1627,12 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       existingSettlement.request_fingerprint !== null &&
       existingSettlement.request_fingerprint !== requestFingerprint
     ) {
+      console.warn("[PayAssure] Checkout reference reused with different sale details", {
+        merchantTransactionReference,
+        status: "reference_conflict",
+      });
       res.status(409).json({
+        code: "CHECKOUT_REFERENCE_CONFLICT",
         error: "This checkout reference was already used for a different sale. Retry with a new reference.",
       });
       return;
@@ -1525,7 +1689,12 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
         duplicateSettlement.rows[0].request_fingerprint !== null &&
         duplicateSettlement.rows[0].request_fingerprint !== requestFingerprint
       ) {
+        console.warn("[PayAssure] Concurrent checkout used this reference for different sale details", {
+          merchantTransactionReference,
+          status: "reference_conflict",
+        });
         res.status(409).json({
+          code: "CHECKOUT_REFERENCE_CONFLICT",
           error: "This checkout reference was already used for a different sale. Retry with a new reference.",
         });
       } else {
@@ -1573,20 +1742,6 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
     const reservedByProduct = new Map(
       pendingProductStock.rows.map((row) => [Number(row.product_id), Number(row.quantity)]),
     );
-    const prescriptionRequired = products.some(
-      (product) => product.prescription_required,
-    );
-    if (prescriptionRequired && !parsed.data.prescriptionReference?.trim()) {
-      await client.query("ROLLBACK");
-      transactionOpen = false;
-      const error = "A prescription reference is required for this sale";
-      await recordFailedCheckout(req.session.email!, parsed.data.paymentMethod, parsed.data.items, error);
-      res.status(400).json({
-        code: "PRESCRIPTION_REFERENCE_REQUIRED",
-        error,
-      });
-      return;
-    }
     for (const product of products) {
       const quantity = quantities.get(Number(product.id))!;
       if (product.stock_count - (reservedByProduct.get(Number(product.id)) ?? 0) < quantity) {
@@ -1666,16 +1821,13 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
 
     const saleResult = await client.query(
       `INSERT INTO sales
-         (payment_method, status, total_cents, payer_name, payer_phone,
-          prescription_reference, prescription_checked_by)
-       VALUES ($1, 'pending', $2, $3, $4, $5, $6) RETURNING id, created_at`,
+         (payment_method, status, total_cents, payer_name, payer_phone)
+       VALUES ($1, 'pending', $2, $3, $4) RETURNING id, created_at`,
       [
         parsed.data.paymentMethod,
         totalCents,
         parsed.data.paymentMethod === "credit" ? parsed.data.payerName : null,
         parsed.data.paymentMethod === "credit" ? parsed.data.payerPhone : null,
-        prescriptionRequired ? parsed.data.prescriptionReference?.trim() : null,
-        prescriptionRequired ? req.session.email : null,
       ],
     );
     const saleId = Number(saleResult.rows[0].id);
@@ -1796,6 +1948,15 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
        WHERE sale.id = $1`,
       [saleId],
     );
+    if (checkoutStatus.rows[0].collectionStatus === "pending") {
+      console.info("[PayAssure] Checkout awaiting collection webhook", {
+        saleId,
+        merchantTransactionReference,
+        endpoint: getRegisteredPayassureWebhookUrl() ?? "not configured",
+        settlementStatus: checkoutStatus.rows[0].settlementStatus,
+        collectionStatus: checkoutStatus.rows[0].collectionStatus,
+      });
+    }
     res.status(checkoutStatus.rows[0].collectionStatus === "pending" ? 202 : 200).json({
       id: saleId,
       paymentMethod: parsed.data.paymentMethod,
@@ -1885,6 +2046,11 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
 });
 
 app.get("/api/checkout/:reference/status", requireAuth, async (req, res, next) => {
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+  });
   try {
     const reference = String(req.params.reference);
     const sale = await pool.query(
@@ -2043,8 +2209,6 @@ app.get("/api/sales", requireAuth, async (_req, res, next) => {
       `SELECT s.id, s.payment_method AS "paymentMethod", s.status,
               s.total_cents AS "totalCents", s.created_at AS "createdAt",
               s.payer_name AS "payerName", s.payer_phone AS "payerPhone",
-              s.prescription_reference AS "prescriptionReference",
-              s.prescription_checked_by AS "prescriptionCheckedBy",
               COALESCE(
                 json_agg(json_build_object(
                   'productName', i.product_name,

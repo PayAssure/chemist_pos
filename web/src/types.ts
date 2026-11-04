@@ -62,8 +62,6 @@ export type Sale = {
   createdAt: string;
   payerName: string | null;
   payerPhone: string | null;
-  prescriptionReference: string | null;
-  prescriptionCheckedBy: string | null;
   failureReason?: string | null;
   items: {
     productName: string;
@@ -191,6 +189,41 @@ export type RetailerProfileData = {
   updatedAt: string;
   integration: RetailerIntegrationData | null;
   payment: RetailerPaymentData | null;
+};
+
+export type RetailerFloatData = {
+  merchantId: string;
+  currency: string;
+  dailyFloat: number;
+  depositedBalance: number;
+  paidOutBalance: number;
+  reservedBalance: number;
+  availableBalance: number;
+  updatedAt: string;
+};
+
+export type RetailerFloatBalance = Pick<
+  RetailerFloatData,
+  | "merchantId"
+  | "currency"
+  | "depositedBalance"
+  | "paidOutBalance"
+  | "reservedBalance"
+  | "availableBalance"
+> & {
+  asOf: string;
+};
+
+export type RetailerFloatDeposit = {
+  depositId: string;
+  merchantId: string;
+  amount: number;
+  payerPhoneNumber: string;
+  status: string;
+  merchantRequestId?: string;
+  checkoutRequestId?: string;
+  responseCode?: string;
+  responseDescription?: string;
 };
 
 export type PayassureParticipantUpdate = Partial<

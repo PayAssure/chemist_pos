@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Checkout from "./checkout/Checkout";
 import Login from "./auth/Login";
 import Inventory from "./products/Inventory";
@@ -7,8 +7,8 @@ import PayassureData from "./payassure/PayassureData";
 import Dashboard from "./dashboard/Dashboard";
 import { useInventoryActions } from "./products/useInventoryActions";
 import SalesHistory from "./sales/SalesHistory";
-import { api } from "./lib/api";
-import { money } from "./lib/money";
+import { api, ApiError } from "./lib/api";
+import { currencyAmount, money } from "./lib/money";
 import { navigate, pathForTab, tabFromPath } from "./lib/navigation";
 import ContactSupport from "./support/ContactSupport";
 import type {
@@ -17,6 +17,9 @@ import type {
   PayassureParticipant,
   PayassureParticipantUpdate,
   Product,
+  RetailerFloatBalance,
+  RetailerFloatData,
+  RetailerFloatDeposit,
   RetailerProfileData,
   Sale,
   Supplier,
@@ -110,10 +113,10 @@ function App() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [cart, setCart] = useState<Record<number, number>>({});
-  const [prescriptionReference, setPrescriptionReference] = useState("");
   const [payerName, setPayerName] = useState("");
   const [payerPhone, setPayerPhone] = useState("");
   const [checkoutPending, setCheckoutPending] = useState(false);
+  const [checkoutStage, setCheckoutStage] = useState<"initiating" | "waiting" | null>(null);
   const checkoutReference = useRef<string | null>(null);
   if (checkoutReference.current === null) {
     try {
@@ -129,6 +132,18 @@ function App() {
     () => emptyRetailerProfile(""),
   );
   const [payassureLoading, setPayassureLoading] = useState(false);
+  const [retailerFloat, setRetailerFloat] = useState<RetailerFloatData | null>(null);
+  const [retailerFloatBalance, setRetailerFloatBalance] =
+    useState<RetailerFloatBalance | null>(null);
+  const [floatLoading, setFloatLoading] = useState(false);
+  const [floatCheckLoading, setFloatCheckLoading] = useState(false);
+  const [floatDepositLoading, setFloatDepositLoading] = useState(false);
+  const [floatError, setFloatError] = useState("");
+  const [floatBalanceCheckedAt, setFloatBalanceCheckedAt] = useState("");
+  const [floatDepositOpen, setFloatDepositOpen] = useState(false);
+  const [floatDepositAmount, setFloatDepositAmount] = useState("");
+  const [floatPayerPhoneNumber, setFloatPayerPhoneNumber] = useState("");
+  const [floatDepositError, setFloatDepositError] = useState("");
 
   useEffect(() => {
     if (!error && !notice) return;
@@ -169,6 +184,90 @@ function App() {
     setDashboard(await api<DashboardData>("/api/dashboard"));
   }, []);
 
+  const refreshRetailerFloat = useCallback(async () => {
+    setFloatLoading(true);
+    setFloatError("");
+    try {
+      const nextFloat = await api<RetailerFloatData>("/api/payassure/float", {
+        cache: "no-store",
+      });
+      setRetailerFloat(nextFloat);
+      setFloatBalanceCheckedAt(new Date().toISOString());
+    } catch (reason) {
+      setFloatError(reason instanceof Error ? reason.message : "Could not load PayAssure float");
+    } finally {
+      setFloatLoading(false);
+    }
+  }, []);
+
+  const checkRetailerFloatBalance = useCallback(async () => {
+    setFloatCheckLoading(true);
+    setFloatError("");
+    try {
+      const balance = await api<RetailerFloatBalance>("/api/payassure/float/balance", {
+        method: "POST",
+        cache: "no-store",
+      });
+      setRetailerFloatBalance(balance);
+      setFloatBalanceCheckedAt(balance.asOf);
+      setRetailerFloat((current) =>
+        current ? { ...current, ...balance } : current,
+      );
+    } catch (reason) {
+      setFloatError(
+        reason instanceof Error ? reason.message : "Could not check PayAssure float balance",
+      );
+    } finally {
+      setFloatCheckLoading(false);
+    }
+  }, []);
+
+  const submitRetailerFloatDeposit = useCallback(async (
+    amount: number,
+    payerPhoneNumber: string,
+  ): Promise<RetailerFloatDeposit> => {
+    setFloatDepositLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const deposit = await api<RetailerFloatDeposit>("/api/payassure/float/deposits", {
+        method: "POST",
+        body: JSON.stringify({ amount, payerPhoneNumber }),
+      });
+      setNotice(
+        `Float deposit request ${deposit.status.toLowerCase()}. The balance changes only after PayAssure confirms the deposit.`,
+      );
+      await refreshRetailerFloat();
+      return deposit;
+    } catch (reason) {
+      const message =
+        reason instanceof Error ? reason.message : "Could not submit PayAssure float deposit";
+      setError(message);
+      throw reason;
+    } finally {
+      setFloatDepositLoading(false);
+    }
+  }, [refreshRetailerFloat]);
+
+  async function submitFloatDeposit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const amount = Number(floatDepositAmount);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || !floatPayerPhoneNumber.trim()) {
+      setFloatDepositError("Enter a positive whole-KES amount and payer phone number.");
+      return;
+    }
+
+    setFloatDepositError("");
+    try {
+      await submitRetailerFloatDeposit(amount, floatPayerPhoneNumber.trim());
+      setFloatDepositAmount("");
+      setFloatPayerPhoneNumber("");
+      setFloatDepositOpen(false);
+    } catch (reason) {
+      setFloatDepositError(reason instanceof Error ? reason.message : "Could not submit float deposit");
+    }
+  }
+
   useEffect(() => {
     api<{ email: string }>("/api/auth/me")
       .then((user) => {
@@ -203,6 +302,16 @@ function App() {
   }, [email]);
 
   useEffect(() => {
+    if (!email) {
+      setRetailerFloat(null);
+      setRetailerFloatBalance(null);
+      setFloatError("");
+      return;
+    }
+    void refreshRetailerFloat();
+  }, [email, refreshRetailerFloat]);
+
+  useEffect(() => {
     if (email) {
       refreshData().catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : "Could not load POS data"),
@@ -231,9 +340,6 @@ function App() {
     (sum, item) => sum + item.product.priceCents * item.quantity,
     0,
   );
-  const prescriptionRequired = cartItems.some(
-    ({ product }) => product.prescriptionRequired,
-  );
   const { saveSupplier, saveProduct, updateProduct, updateBuyingPrice, addStock, updateBatchExpiry } =
     useInventoryActions(refreshData, setError, setNotice);
 
@@ -247,6 +353,8 @@ function App() {
       await api<void>("/api/auth/logout", { method: "POST" });
       setEmail(null);
       setCart({});
+      setRetailerFloat(null);
+      setRetailerFloatBalance(null);
       setNotice("You have been signed out.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not sign out");
@@ -278,10 +386,12 @@ function App() {
   async function checkout(
     paymentMethod: "cash" | "mpesa" | "credit",
     mpesaPhone?: string,
+    retryingUnresolvedPayment = false,
   ): Promise<boolean> {
     setError("");
     setNotice("");
     setCheckoutPending(true);
+    setCheckoutStage("initiating");
     const reference = checkoutReference.current || `POS-${window.crypto.randomUUID()}`;
     checkoutReference.current = reference;
     try {
@@ -293,60 +403,62 @@ function App() {
     type CheckoutStatus = {
       id: number;
       status: "pending" | "completed" | "failed";
+      settlementStatus:
+        | "queued"
+        | "processing"
+        | "accepted"
+        | "failed"
+        | "retrying"
+        | "partially_failed"
+        | "awaiting_reconciliation"
+        | "completed";
       collectionStatus: "pending" | "succeeded" | "failed";
       settlementError: string | null;
     };
 
     const fetchStatus = () =>
-      api<CheckoutStatus>(`/api/checkout/${encodeURIComponent(reference)}/status`);
+      api<CheckoutStatus>(`/api/checkout/${encodeURIComponent(reference)}/status`, {
+        cache: "no-store",
+      });
 
+    let initiationAcknowledged = false;
     try {
-      let checkoutStatus: CheckoutStatus | null = null;
-      let initiationError: string | null = null;
-      try {
-        checkoutStatus = await api<CheckoutStatus>("/api/checkout", {
-          method: "POST",
-          body: JSON.stringify({
-            paymentMethod,
-            merchantTransactionReference: reference,
-            ...(paymentMethod === "credit" ? { payerName, payerPhone } : {}),
-            ...(paymentMethod === "mpesa" ? { payerPhone: mpesaPhone } : {}),
-            ...(prescriptionRequired ? { prescriptionReference } : {}),
-            items: cartItems.map(({ product, quantity }) => ({
-              productId: product.id,
-              quantity,
-            })),
-          }),
-        });
-      } catch (reason) {
-        initiationError = reason instanceof Error ? reason.message : "Could not initiate PayAssure checkout";
-        try {
-          checkoutStatus = await fetchStatus();
-        } catch {
-          throw new Error(initiationError);
-        }
-      }
+      let checkoutStatus = await api<CheckoutStatus>("/api/checkout", {
+        method: "POST",
+        body: JSON.stringify({
+          paymentMethod,
+          merchantTransactionReference: reference,
+          ...(paymentMethod === "credit" ? { payerName, payerPhone } : {}),
+          ...(paymentMethod === "mpesa" ? { payerPhone: mpesaPhone } : {}),
+          items: cartItems.map(({ product, quantity }) => ({
+            productId: product.id,
+            quantity,
+          })),
+        }),
+      });
+      initiationAcknowledged = true;
 
+      if (checkoutStatus.collectionStatus === "pending") {
+        setCheckoutStage("waiting");
+      }
       const deadline = Date.now() + 120_000;
       while (checkoutStatus?.collectionStatus === "pending" && Date.now() < deadline) {
         await new Promise((resolve) => window.setTimeout(resolve, 1000));
-        try {
-          checkoutStatus = await fetchStatus();
-        } catch (reason) {
-          if (initiationError) throw new Error(initiationError);
-          throw reason;
-        }
+        checkoutStatus = await fetchStatus();
       }
 
       if (checkoutStatus?.collectionStatus === "pending") {
-        setNotice("PayAssure is still processing this payment. Do not retry; this checkout reference is being monitored.");
+        setNotice(
+          retryingUnresolvedPayment
+            ? "The new checkout is still pending. The earlier payment attempt also remains unresolved; check both statuses before retrying."
+            : "No collection webhook was received within two minutes. This checkout remains pending; do not create a new sale.",
+        );
         await refreshData().catch(() => undefined);
         return false;
       }
       if (checkoutStatus?.collectionStatus !== "succeeded") {
         throw new Error(
           checkoutStatus?.settlementError ??
-            initiationError ??
             "PayAssure did not confirm collection. The sale was not completed.",
         );
       }
@@ -358,27 +470,57 @@ function App() {
         console.warn("Could not clear the completed checkout reference:", reason);
       }
       setCart({});
-      setPrescriptionReference("");
       setPayerName("");
       setPayerPhone("");
-      setNotice("PayAssure confirmed collection and the sale was saved.");
+      const completionNotice = retryingUnresolvedPayment
+        ? "PayAssure confirmed this new checkout. Note: the earlier payment attempt remains unresolved and could also complete."
+        : "PayAssure confirmed collection and the sale was saved.";
+      setNotice(completionNotice);
       try {
         await refreshData();
       } catch {
-        setNotice("PayAssure confirmed collection and the sale was saved, but POS data could not refresh.");
+        setNotice(`${completionNotice} POS data could not refresh.`);
       }
       return true;
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Checkout failed";
-      setError(message);
-      let collectionFailed = false;
-      try {
-        const status = await fetchStatus();
-        collectionFailed = status.collectionStatus === "failed";
-      } catch {
-        collectionFailed = false;
+      const staleReferenceConflict =
+        reason instanceof ApiError && reason.code === "CHECKOUT_REFERENCE_CONFLICT";
+      const unresolvedCollection =
+        reason instanceof ApiError && reason.code === "CHECKOUT_COLLECTION_UNRESOLVED";
+      if (staleReferenceConflict) {
+        checkoutReference.current = "";
+        try {
+          window.sessionStorage.removeItem("payassure-checkout-reference");
+        } catch (storageError) {
+          console.warn("Could not clear the conflicting checkout reference:", storageError);
+        }
+        setNotice("This checkout reference belonged to a different sale. No new payment was sent. Submit again to use a fresh reference.");
+      } else if (unresolvedCollection && !retryingUnresolvedPayment) {
+        console.warn(
+          "[PayAssure] Retrying checkout with a new reference while an earlier collection remains unresolved",
+          { previousReference: reference },
+        );
+        checkoutReference.current = "";
+        try {
+          window.sessionStorage.removeItem("payassure-checkout-reference");
+        } catch (storageError) {
+          console.warn("Could not clear the unresolved checkout reference:", storageError);
+        }
+        return await checkout(paymentMethod, mpesaPhone, true);
+      } else {
+        setError(message);
       }
-      if (collectionFailed || message.startsWith("This checkout reference was already used")) {
+      let collectionFailed = false;
+      if (initiationAcknowledged) {
+        try {
+          const status = await fetchStatus();
+          collectionFailed = status.collectionStatus === "failed";
+        } catch {
+          collectionFailed = false;
+        }
+      }
+      if (collectionFailed) {
         checkoutReference.current = "";
         try {
           window.sessionStorage.removeItem("payassure-checkout-reference");
@@ -396,6 +538,7 @@ function App() {
       return false;
     } finally {
       setCheckoutPending(false);
+      setCheckoutStage(null);
     }
   }
 
@@ -476,9 +619,55 @@ function App() {
             <h1>Good day</h1>
             <p className="subtitle">A clear view of your shop, sales, and stock.</p>
           </div>
-          <div className="summary-card">
-            <span>Medicine units in stock</span>
-            <strong>{products.reduce((sum, product) => sum + product.stockCount, 0)}</strong>
+          <div className="welcome-summary-cards">
+            <section className="summary-card float-summary-card" aria-label="PayAssure float balance">
+              <div className="float-summary-details">
+                <span>Available PayAssure float</span>
+                <strong>
+                  {retailerFloatBalance
+                    ? currencyAmount(retailerFloatBalance.availableBalance, retailerFloatBalance.currency)
+                    : retailerFloat
+                      ? currencyAmount(retailerFloat.availableBalance, retailerFloat.currency)
+                      : "—"}
+                </strong>
+                <small>
+                  {retailerFloat
+                    ? `Daily float: ${currencyAmount(retailerFloat.dailyFloat, retailerFloat.currency)}`
+                    : floatLoading
+                      ? "Daily float: loading…"
+                      : "Daily float: unavailable"}
+                </small>
+                {floatError && <small className="expiry-warning" role="status">{floatError}</small>}
+              </div>
+              <div className="float-summary-action-group">
+                <div className="float-summary-actions">
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    onClick={() => {
+                      setFloatDepositError("");
+                      setFloatDepositOpen(true);
+                    }}
+                    disabled={retailerProfile.integration?.isActive !== true || floatDepositLoading}
+                  >
+                    Float deposit
+                  </button>
+                  <button
+                    className="button button-quiet"
+                    type="button"
+                    onClick={() => void checkRetailerFloatBalance()}
+                    disabled={floatLoading || floatCheckLoading}
+                  >
+                    {floatCheckLoading ? "Checking…" : "Check balance"}
+                  </button>
+                </div>
+                <small className="float-balance-checked">
+                  Balance checked: {floatBalanceCheckedAt
+                    ? new Date(floatBalanceCheckedAt).toLocaleTimeString()
+                    : "Not checked yet"}
+                </small>
+              </div>
+            </section>
           </div>
         </div>
 
@@ -490,15 +679,13 @@ function App() {
             products={products}
             cartItems={cartItems}
             total={total}
-            prescriptionRequired={prescriptionRequired}
-            prescriptionReference={prescriptionReference}
             payerName={payerName}
             payerPhone={payerPhone}
             onCartChange={setCart}
-            onPrescriptionReferenceChange={setPrescriptionReference}
             onPayerNameChange={setPayerName}
             onPayerPhoneChange={setPayerPhone}
             isCheckingOut={checkoutPending}
+            checkoutStage={checkoutStage}
             onCheckout={checkout}
           />
         )}
@@ -527,6 +714,89 @@ function App() {
         {tab === "history" && <SalesHistory sales={sales} />}
         {tab === "support" && <ContactSupport />}
       </main>
+      {floatDepositOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !floatDepositLoading) {
+              setFloatDepositOpen(false);
+            }
+          }}
+        >
+          <section
+            className="panel form-panel float-deposit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="float-deposit-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <h2 id="float-deposit-title">Deposit retailer float</h2>
+                <p>Request an M-Pesa STK prompt for this retailer’s PayAssure float.</p>
+              </div>
+              <button
+                className="modal-close"
+                type="button"
+                aria-label="Close dialog"
+                onClick={() => setFloatDepositOpen(false)}
+                disabled={floatDepositLoading}
+              >
+                ×
+              </button>
+            </div>
+            <p className="helper-text">
+              A submitted request is not a successful deposit. Available balance changes only after
+              PayAssure verifies a successful provider callback.
+            </p>
+            <form className="form-panel" onSubmit={submitFloatDeposit}>
+              <label>
+                Amount (KES)
+                <input
+                  type="number"
+                  min="1"
+                  max="2147483647"
+                  step="1"
+                  required
+                  value={floatDepositAmount}
+                  onChange={(event) => setFloatDepositAmount(event.target.value)}
+                />
+              </label>
+              <label>
+                Payer phone number
+                <input
+                  type="tel"
+                  autoComplete="tel"
+                  maxLength={30}
+                  required
+                  value={floatPayerPhoneNumber}
+                  onChange={(event) => setFloatPayerPhoneNumber(event.target.value)}
+                />
+              </label>
+              {floatDepositError && (
+                <p className="alert alert-error" role="alert">{floatDepositError}</p>
+              )}
+              <div className="modal-actions">
+                <button
+                  className="button button-quiet"
+                  type="button"
+                  onClick={() => setFloatDepositOpen(false)}
+                  disabled={floatDepositLoading}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="button button-primary"
+                  type="submit"
+                  disabled={floatDepositLoading}
+                >
+                  {floatDepositLoading ? "Submitting deposit…" : "Request deposit"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

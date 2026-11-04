@@ -49,6 +49,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .account-dropdown .button { width: 100%; }
 .main { width: 100%; max-width: none; min-width: 0; margin: 0 auto; padding: 38px clamp(20px, 3vw, 56px) 72px; }
 .welcome { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+.welcome-summary-cards { display: flex; width: min(100%, 560px); align-items: stretch; }
 .eyebrow { color: var(--green); font-size: 13px; font-weight: 800; letter-spacing: .13em; margin: 0 0 8px; }
 h1, h2, p { margin-top: 0; }
 h1, h2 { font-family: "Arial", sans-serif; }
@@ -57,6 +58,14 @@ h1 { font-size: 38px; font-weight: 800; letter-spacing: -.04em; margin-bottom: 5
 .summary-card { padding: 14px 20px; min-width: 155px; background: #fff; border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; gap: 4px; }
 .summary-card span { color: var(--muted); font-size: 14px; font-weight: 600; }
 .summary-card strong { font: 800 26px "Arial", sans-serif; }
+.float-summary-card { display: grid; width: 100%; min-width: 420px; max-width: 560px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 16px; padding: 12px 18px; }
+.float-summary-details { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.float-summary-details > strong { font: 800 26px "Arial", sans-serif; overflow-wrap: anywhere; }
+.float-summary-card small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.float-summary-action-group { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.float-summary-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.float-summary-actions .button { min-height: 34px; padding: 0 10px; font-size: 12px; }
+.float-summary-action-group .float-balance-checked { color: var(--muted); font-size: 11px; text-align: right; }
 .tab { border: 0; border-bottom: 3px solid transparent; background: none; color: var(--muted); padding: 12px 18px; margin-bottom: -1px; font-size: 16px; font-weight: 600; }
 .tab.active { color: var(--green); border-bottom-color: var(--green); font-weight: 700; }
 .panel { min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
@@ -174,6 +183,7 @@ h1 { font-size: 38px; font-weight: 800; letter-spacing: -.04em; margin-bottom: 5
 .terms-list h3 { margin-bottom: 5px; }
 .terms-list p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
 .support-modal { width: min(100%, 560px); max-height: min(90vh, 800px); overflow-y: auto; box-shadow: 0 24px 80px rgb(0 0 0 / 24%); }
+.float-deposit-modal { width: min(100%, 560px); max-height: min(90vh, 800px); overflow-y: auto; box-shadow: 0 24px 80px rgb(0 0 0 / 24%); }
 .support-modal .modal-heading { margin-bottom: 4px; }
 .retailer-edit-modal { width: min(100%, 720px); max-height: min(90vh, 820px); overflow-y: auto; box-shadow: 0 24px 80px rgb(0 0 0 / 24%); }
 .modal-backdrop {
@@ -290,6 +300,8 @@ input:focus, select:focus, textarea:focus { border-color: #69a184; box-shadow: 0
   .header-nav .tab { flex: 0 0 auto; }
   .main { padding: 28px max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); }
   .welcome { align-items: flex-start; gap: 14px; }
+  .welcome-summary-cards { width: min(100%, 560px); }
+  .float-summary-card { min-width: 0; }
   .summary-card { min-width: 118px; padding: 12px; }
   .summary-card strong { font-size: 19px; }
   .checkout-layout { grid-template-columns: 1fr; }
@@ -318,6 +330,11 @@ input:focus, select:focus, textarea:focus { border-color: #69a184; box-shadow: 0
 }
 @media (max-width: 430px) {
   .welcome { flex-direction: column; }
+  .welcome-summary-cards { width: 100%; }
+  .float-summary-card { grid-template-columns: 1fr; gap: 8px; padding: 12px; }
+  .float-summary-action-group { align-items: flex-start; }
+  .float-summary-actions { justify-content: flex-start; }
+  .float-summary-action-group .float-balance-checked { text-align: left; }
   .field-row { grid-template-columns: 1fr; }
   .panel { padding: 16px; }
   .topbar { padding-right: 12px; padding-left: 12px; }
@@ -329,6 +346,7 @@ input:focus, select:focus, textarea:focus { border-color: #69a184; box-shadow: 0
   .modal-backdrop { padding: 12px; align-items: start; }
   .inventory-modal { max-height: calc(100svh - 24px); padding: 16px; }
   .support-modal { max-height: calc(100svh - 24px); padding: 16px; }
+  .float-deposit-modal { max-height: calc(100svh - 24px); padding: 16px; }
   .retailer-edit-modal { max-height: calc(100svh - 24px); padding: 16px; }
   .product-overview-fields { grid-template-columns: 1fr; }
   .main { padding: 24px 12px 40px; }

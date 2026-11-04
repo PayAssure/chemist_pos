@@ -54,7 +54,11 @@ function displayDateTime(value: string): string {
   }).format(date);
 }
 
-function PayassureData({ profile, loading, onSave }: PayassureDataProps) {
+function PayassureData({
+  profile,
+  loading,
+  onSave,
+}: PayassureDataProps) {
   const [editing, setEditing] = useState<CardSection | null>(null);
   const [draft, setDraft] = useState(profile);
   const [saving, setSaving] = useState(false);
