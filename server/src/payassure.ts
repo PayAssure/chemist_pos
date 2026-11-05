@@ -420,17 +420,17 @@ export function getPayassureWebhookUrl(): string | null {
   try {
     parsed = new URL(configuredUrl);
   } catch {
-    throw new Error("PAYASSURE_WEBHOOK_URL must be an absolute HTTPS URL ending in /webhook");
+    throw new Error("PAYASSURE_WEBHOOK_URL must be an absolute HTTP or HTTPS URL ending in /webhook");
   }
   if (
-    parsed.protocol !== "https:" ||
+    !["http:", "https:"].includes(parsed.protocol) ||
     parsed.username ||
     parsed.password ||
     parsed.search ||
     parsed.hash ||
     parsed.pathname !== "/webhook"
   ) {
-    throw new Error("PAYASSURE_WEBHOOK_URL must be an absolute HTTPS URL ending in /webhook");
+    throw new Error("PAYASSURE_WEBHOOK_URL must be an absolute HTTP or HTTPS URL ending in /webhook");
   }
   return parsed.toString().replace(/\/$/, "");
 }
@@ -522,14 +522,14 @@ export async function registerPayassureWebhookUrl(): Promise<void> {
     throw new Error("The effective PayAssure webhook URL is invalid");
   }
   if (
-    parsedEffectiveUrl.protocol !== "https:" ||
+    !["http:", "https:"].includes(parsedEffectiveUrl.protocol) ||
     parsedEffectiveUrl.username ||
     parsedEffectiveUrl.password ||
     parsedEffectiveUrl.search ||
     parsedEffectiveUrl.hash ||
     parsedEffectiveUrl.pathname !== "/webhook"
   ) {
-    throw new Error("The effective PayAssure webhook URL must be HTTPS and end in /webhook");
+    throw new Error("The effective PayAssure webhook URL must use HTTP or HTTPS and end in /webhook");
   }
   const normalizedEffectiveUrl = parsedEffectiveUrl.toString().replace(/\/$/, "");
   if (
@@ -923,7 +923,11 @@ async function settlementRequest(
 export async function initiatePayassureSettlement(
   payload: PayassureSettlementPayload,
   onPayloadPrepared: (preparedPayload: PayassureSettlementPayload) => Promise<void>,
-): Promise<{ merchantId: string; providerRequestId: string }> {
+): Promise<{
+  merchantId: string;
+  providerRequestId: string;
+  providerSettlementId: string | null;
+}> {
   const config = getConfig();
   const credentials = retailerIntegrationCredentials(await getPayassureParticipant());
   const preparedPayload = payload.merchantId
@@ -989,15 +993,19 @@ export async function initiatePayassureSettlement(
         sessionToken,
       ],
     );
+    const providerSettlementId =
+      typeof initiation.body.settlementId === "string" ? initiation.body.settlementId : null;
     console.info("[PayAssure] Settlement initiated", {
       operation: "initiate-settlement",
       merchantTransactionReference: preparedPayload.merchantTransactionReference,
       providerRequestId: initiation.requestId,
+      providerSettlementId,
       responseKeys: Object.keys(initiation.body),
     });
     return {
       merchantId: credentials.merchantId,
       providerRequestId: initiation.requestId,
+      providerSettlementId,
     };
   } catch (error) {
     console.error("[PayAssure] Settlement initiation failed", {

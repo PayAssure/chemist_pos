@@ -1136,9 +1136,13 @@ async function applyPayassureWebhookEvent(
             settlement.last_event_at AS "lastEventAt"
      FROM payassure_settlements settlement
      JOIN sales sale ON sale.id = settlement.sale_id
-     WHERE settlement.merchant_transaction_reference = $1
+     WHERE settlement.provider_settlement_id = $2
+        OR (
+          settlement.provider_settlement_id IS NULL
+          AND settlement.merchant_transaction_reference = $1
+        )
      FOR UPDATE OF settlement, sale`,
-    [event.merchantTransactionReference],
+    [event.merchantTransactionReference, event.settlementId],
   );
   const sale = result.rows[0];
   if (!sale) throw Object.assign(new Error("No matching checkout for this PayAssure event"), { status: 404 });
@@ -1479,8 +1483,12 @@ app.post("/webhook", async (req, res, next) => {
               settlement.collection_status AS "collectionStatus"
        FROM sales sale
        JOIN payassure_settlements settlement ON settlement.sale_id = sale.id
-       WHERE settlement.merchant_transaction_reference = $1`,
-      [event.merchantTransactionReference],
+       WHERE settlement.provider_settlement_id = $2
+          OR (
+            settlement.provider_settlement_id IS NULL
+            AND settlement.merchant_transaction_reference = $1
+          )`,
+      [event.merchantTransactionReference, event.settlementId],
     );
     await client.query(
       `UPDATE payassure_webhook_events
@@ -1546,7 +1554,7 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
     return;
   }
 
-  const merchantTransactionReference =
+  let merchantTransactionReference =
     parsed.data.merchantTransactionReference ?? `POS-${randomUUID()}`;
   let mpesaPhone: string | null = null;
   if (parsed.data.paymentMethod === "mpesa") {
@@ -1610,41 +1618,6 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
     res.status(checkout.collectionStatus === "pending" ? 202 : 200).json(checkout);
   }
 
-  let existingSettlement: { id: number; request_fingerprint: string | null } | undefined;
-  try {
-    const result = await pool.query<{ id: number; request_fingerprint: string | null }>(
-      `SELECT id, request_fingerprint FROM payassure_settlements
-       WHERE merchant_transaction_reference = $1`,
-      [merchantTransactionReference],
-    );
-    existingSettlement = result.rows[0];
-  } catch (error) {
-    next(error);
-    return;
-  }
-  if (existingSettlement) {
-    if (
-      existingSettlement.request_fingerprint !== null &&
-      existingSettlement.request_fingerprint !== requestFingerprint
-    ) {
-      console.warn("[PayAssure] Checkout reference reused with different sale details", {
-        merchantTransactionReference,
-        status: "reference_conflict",
-      });
-      res.status(409).json({
-        code: "CHECKOUT_REFERENCE_CONFLICT",
-        error: "This checkout reference was already used for a different sale. Retry with a new reference.",
-      });
-      return;
-    }
-    try {
-      await returnExistingSettlement(existingSettlement.id);
-    } catch (error) {
-      next(error);
-    }
-    return;
-  }
-
   const quantities = new Map<number, number>();
   for (const item of parsed.data.items) {
     const combined = (quantities.get(item.productId) ?? 0) + item.quantity;
@@ -1683,24 +1656,13 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       [merchantTransactionReference],
     );
     if (duplicateSettlement.rows[0]) {
-      await client.query("ROLLBACK");
-      transactionOpen = false;
-      if (
-        duplicateSettlement.rows[0].request_fingerprint !== null &&
-        duplicateSettlement.rows[0].request_fingerprint !== requestFingerprint
-      ) {
-        console.warn("[PayAssure] Concurrent checkout used this reference for different sale details", {
-          merchantTransactionReference,
-          status: "reference_conflict",
-        });
-        res.status(409).json({
-          code: "CHECKOUT_REFERENCE_CONFLICT",
-          error: "This checkout reference was already used for a different sale. Retry with a new reference.",
-        });
-      } else {
-        await returnExistingSettlement(duplicateSettlement.rows[0].id);
-      }
-      return;
+      const originalReference = merchantTransactionReference;
+      merchantTransactionReference = `POS-${randomUUID()}`;
+      console.warn("[PayAssure] Duplicate checkout reference detected; generated a fresh reference", {
+        originalReference,
+        replacementReference: merchantTransactionReference,
+        status: "reference_regenerated",
+      });
     }
     const productIds = [...quantities.keys()].sort((a, b) => a - b);
     const result = await client.query(
@@ -1935,9 +1897,10 @@ app.post("/api/checkout", requireAuth, async (req, res, next) => {
       `UPDATE payassure_settlements
        SET status = CASE WHEN status = 'queued' THEN 'accepted' ELSE status END,
            last_error = NULL, provider_request_id = COALESCE(provider_request_id, $2),
+           provider_settlement_id = COALESCE(provider_settlement_id, $3),
            updated_at = NOW()
        WHERE id = $1`,
-      [settlementId, initiation.providerRequestId],
+      [settlementId, initiation.providerRequestId, initiation.providerSettlementId],
     );
     const checkoutStatus = await pool.query(
       `SELECT sale.status, settlement.status AS "settlementStatus",
