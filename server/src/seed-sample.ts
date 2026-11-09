@@ -58,6 +58,10 @@ const sampleUsers = [
   "sample.pharmacist@payassure.local",
   "sample.manager@payassure.local",
 ];
+const requestedSampleUsers = [
+  "kimaniwilfred95@gmail.com",
+  "zionlandfarmcareltd@gmail.com",
+];
 const supplierNames = [
   "Central Medical Wholesalers",
   "Green Cross Distributors",
@@ -262,13 +266,82 @@ async function seedSampleData(): Promise<void> {
   const newCredentials: Array<{ email: string; password: string }> = [];
   try {
     await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1))",
+      ["payassure:seed-sample"],
+    );
+    const completedSeed = await client.query(
+      "SELECT 1 FROM sample_seed_runs WHERE seed_name = $1",
+      ["sample"],
+    );
+    if (completedSeed.rowCount) {
+      await client.query("COMMIT");
+      console.log("Sample seed already completed; no data was changed.");
+      return;
+    }
+
+    const requestedUserPassword = process.env.POS_SAMPLE_USER_PASSWORD;
+    if (!requestedUserPassword || requestedUserPassword.length < 12) {
+      throw new Error(
+        "Set POS_SAMPLE_USER_PASSWORD to a password at least 12 characters long.",
+      );
+    }
+
+    for (const email of requestedSampleUsers) {
+      const requestedUserPasswordHash = await bcrypt.hash(
+        requestedUserPassword,
+        12,
+      );
+      await client.query(
+        `INSERT INTO users (email, password_hash) VALUES ($1, $2)
+         ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
+        [email, requestedUserPasswordHash],
+      );
+    }
+
     const existingData = await client.query(
       "SELECT 1 FROM suppliers WHERE name = $1 LIMIT 1",
       [supplierNames[0]],
     );
     if (existingData.rowCount) {
+      const existingSampleSales = await client.query(
+        `SELECT 1
+         FROM sales s
+         WHERE s.payer_name LIKE 'Demo Dashboard Payer %'
+            OR EXISTS (
+              SELECT 1
+              FROM sale_items si
+              JOIN products p ON p.id = si.product_id
+              JOIN suppliers sp ON sp.id = p.supplier_id
+              WHERE si.sale_id = s.id
+                AND sp.payassure_merchant_id LIKE 'DEMO-PA-TEST-MERCHANT-%'
+            )
+         LIMIT 1`,
+      );
+      if (existingSampleSales.rowCount) {
+        await client.query(
+          "INSERT INTO sample_seed_runs (seed_name) VALUES ($1)",
+          ["sample"],
+        );
+        await client.query("COMMIT");
+        console.log(
+          `Ensured sample login accounts: ${requestedSampleUsers.join(", ")}`,
+        );
+        console.log(
+          "Existing sample data was recorded as seeded; no sample data was changed.",
+        );
+        return;
+      }
+
       await seedDashboardSampleData(client);
+      await client.query(
+        "INSERT INTO sample_seed_runs (seed_name) VALUES ($1)",
+        ["sample"],
+      );
       await client.query("COMMIT");
+      console.log(
+        `Ensured sample login accounts: ${requestedSampleUsers.join(", ")}`,
+      );
       console.log(
         "Added 12 sample sales (4 on credit) and 3 failed checkout attempts for the dashboard.",
       );
@@ -489,7 +562,14 @@ async function seedSampleData(): Promise<void> {
       );
     }
 
+    await client.query(
+      "INSERT INTO sample_seed_runs (seed_name) VALUES ($1)",
+      ["sample"],
+    );
     await client.query("COMMIT");
+    console.log(
+      `Ensured sample login accounts: ${requestedSampleUsers.join(", ")}`,
+    );
     console.log(
       `Created ${supplierNames.length} suppliers, ${medicines.length} medicines, ` +
         `${medicines.length * 2} batches, and ${transactionCount} completed sale records, ` +

@@ -5,6 +5,11 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS sample_seed_runs (
+  seed_name TEXT PRIMARY KEY,
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS payassure_tokens (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   access_token TEXT,
