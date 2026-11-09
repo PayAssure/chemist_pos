@@ -9,6 +9,9 @@ if (!process.env.DATABASE_URL) {
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 export async function initializeDatabase(): Promise<void> {
-  const schema = await readFile(path.resolve(__dirname, "../schema.sql"), "utf8");
+  const schemaPath = process.env.NETLIFY
+    ? path.resolve(process.cwd(), "dist/server/schema.sql")
+    : path.resolve(__dirname, "../schema.sql");
+  const schema = await readFile(schemaPath, "utf8");
   await pool.query(schema);
 }

@@ -1,20 +1,43 @@
 import { money } from "../lib/money";
-import type { DashboardData } from "../types";
+import type { DashboardData, DashboardPeriod } from "../types";
 
 type DashboardProps = {
   data: DashboardData;
+  period: DashboardPeriod;
+  onPeriodChange: (period: DashboardPeriod) => void;
 };
 
-function Dashboard({ data }: DashboardProps) {
-  const dateLabel = new Date(`${data.date}T00:00:00`).toLocaleDateString();
+const periodLabels: Record<DashboardPeriod, string> = {
+  today: "Today",
+  week: "This week",
+  month: "This month",
+  "all-time": "All time",
+};
 
+function Dashboard({ data, period, onPeriodChange }: DashboardProps) {
+  const dateLabel = (date: string) => new Date(`${date}T00:00:00`).toLocaleDateString();
+  const rangeLabel = period === "today"
+    ? dateLabel(data.date)
+    : `${dateLabel(data.startDate)} – ${dateLabel(data.date)}`;
   return (
     <section className="dashboard">
       <div className="panel-heading dashboard-heading">
         <div>
-          <h2>Today’s performance</h2>
-          <p>{dateLabel} · completed sales and checkout attempts</p>
+          <h2>{periodLabels[period]} performance</h2>
+          <p>{rangeLabel} · completed sales and checkout attempts</p>
         </div>
+        <label className="dashboard-period-filter">
+          <span>Show</span>
+          <select
+            value={period}
+            onChange={(event) => onPeriodChange(event.target.value as DashboardPeriod)}
+          >
+            <option value="today">Today</option>
+            <option value="week">This week</option>
+            <option value="month">This month</option>
+            <option value="all-time">All time</option>
+          </select>
+        </label>
       </div>
 
       <div className="dashboard-metrics">
@@ -25,6 +48,10 @@ function Dashboard({ data }: DashboardProps) {
         <article className="dashboard-metric">
           <span>Sales total</span>
           <strong>{money(data.incomeCents)}</strong>
+        </article>
+        <article className="dashboard-metric">
+          <span>Average sales per day</span>
+          <strong>{money(data.averageSalesPerDayCents)}</strong>
         </article>
         <article className="dashboard-metric">
           <span>Supplier buying cost of goods sold</span>
@@ -42,7 +69,7 @@ function Dashboard({ data }: DashboardProps) {
 
       {(data.unpricedSaleLines > 0 || data.supplierCosts.some((supplier) => supplier.unpricedSaleLines > 0)) && (
         <div className="alert alert-info" role="note">
-          Some products sold today do not have a buying price set. Update their buying
+          Some products sold in this period do not have a buying price set. Update their buying
           prices to complete supplier cost totals. Historical costs cannot be inferred.
         </div>
       )}
@@ -56,7 +83,11 @@ function Dashboard({ data }: DashboardProps) {
           <div className="panel-heading">
             <div>
               <h2>Supplier totals</h2>
-              <p>Buying cost of products sold today, grouped by supplier.</p>
+              <p>
+                Buying cost of products sold {period === "all-time"
+                  ? "over all time"
+                  : periodLabels[period].toLowerCase()}, grouped by supplier.
+              </p>
             </div>
           </div>
           {data.supplierCosts.length ? (
@@ -148,7 +179,7 @@ function Dashboard({ data }: DashboardProps) {
               ))}
             </div>
           ) : (
-            <div className="empty">No checkout transactions recorded today.</div>
+            <div className="empty">No checkout transactions recorded {periodLabels[period].toLowerCase()}.</div>
           )}
         </article>
       </div>

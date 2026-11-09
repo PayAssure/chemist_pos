@@ -125,9 +125,11 @@ h1 { font-size: 38px; font-weight: 800; letter-spacing: -.04em; margin-bottom: 5
 @keyframes toast-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 .management { display: flex; flex-direction: column; gap: 18px; }
 .dashboard { display: flex; flex-direction: column; gap: 16px; }
-.dashboard-heading { margin: 0; }
+.dashboard-heading { align-items: flex-end; justify-content: space-between; margin: 0; }
 .dashboard-heading h2 { font-size: 24px; font-weight: 800; margin: 0 0 5px; }
 .dashboard-heading p { color: var(--muted); font-size: 15px; margin: 0; }
+.dashboard-period-filter { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; font-weight: 600; }
+.dashboard-period-filter select { min-width: 150px; }
 .dashboard-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
 .dashboard-metric { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; min-height: 116px; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
 .dashboard-metric span { color: var(--muted); font-size: 14px; font-weight: 600; }

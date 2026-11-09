@@ -108,11 +108,16 @@ export type SupplierCost = {
   unpricedSaleLines: number;
 };
 
+export type DashboardPeriod = "today" | "week" | "month" | "all-time";
+
 export type DashboardData = {
+  period: DashboardPeriod;
   date: string;
+  startDate: string;
   successfulTransactions: number;
   failedTransactions: number;
   incomeCents: number;
+  averageSalesPerDayCents: number;
   unitsSold: number;
   supplierCostCents: number;
   unpricedSaleLines: number;

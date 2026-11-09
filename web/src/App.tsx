@@ -14,6 +14,7 @@ import ContactSupport from "./support/ContactSupport";
 import type {
   Batch,
   DashboardData,
+  DashboardPeriod,
   PayassureParticipant,
   PayassureParticipantUpdate,
   Product,
@@ -112,6 +113,8 @@ function App() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>("today");
+  const dashboardRequestId = useRef(0);
   const [cart, setCart] = useState<Record<number, number>>({});
   const [payerName, setPayerName] = useState("");
   const [payerPhone, setPayerPhone] = useState("");
@@ -166,23 +169,25 @@ function App() {
   }, []);
 
   const refreshData = useCallback(async () => {
-    const [nextProducts, nextSuppliers, nextSales, nextBatches, nextDashboard] = await Promise.all([
+    const [nextProducts, nextSuppliers, nextSales, nextBatches] = await Promise.all([
       api<Product[]>("/api/products"),
       api<Supplier[]>("/api/suppliers"),
       api<Sale[]>("/api/sales"),
       api<Batch[]>("/api/batches"),
-      api<DashboardData>("/api/dashboard"),
     ]);
     setProducts(nextProducts);
     setSuppliers(nextSuppliers);
     setSales(nextSales);
     setBatches(nextBatches);
-    setDashboard(nextDashboard);
   }, []);
 
   const refreshDashboard = useCallback(async () => {
-    setDashboard(await api<DashboardData>("/api/dashboard"));
-  }, []);
+    const requestId = ++dashboardRequestId.current;
+    const nextDashboard = await api<DashboardData>(
+      `/api/dashboard?period=${dashboardPeriod}`,
+    );
+    if (requestId === dashboardRequestId.current) setDashboard(nextDashboard);
+  }, [dashboardPeriod]);
 
   const refreshRetailerFloat = useCallback(async () => {
     setFloatLoading(true);
@@ -310,6 +315,13 @@ function App() {
     }
     void refreshRetailerFloat();
   }, [email, refreshRetailerFloat]);
+
+  useEffect(() => {
+    if (!email) return;
+    refreshDashboard().catch((reason: unknown) =>
+      setError(reason instanceof Error ? reason.message : "Could not load dashboard data"),
+    );
+  }, [email, refreshDashboard]);
 
   useEffect(() => {
     if (email) {
@@ -453,7 +465,7 @@ function App() {
             ? "The new checkout is still pending. The earlier payment attempt also remains unresolved; check both statuses before retrying."
             : "No collection webhook was received within two minutes. This checkout remains pending; do not create a new sale.",
         );
-        await refreshData().catch(() => undefined);
+        await Promise.all([refreshData(), refreshDashboard()]).catch(() => undefined);
         return false;
       }
       if (checkoutStatus?.collectionStatus !== "succeeded") {
@@ -477,7 +489,7 @@ function App() {
         : "PayAssure confirmed collection and the sale was saved.";
       setNotice(completionNotice);
       try {
-        await refreshData();
+        await Promise.all([refreshData(), refreshDashboard()]);
       } catch {
         setNotice(`${completionNotice} POS data could not refresh.`);
       }
@@ -529,7 +541,7 @@ function App() {
         }
       }
       try {
-        await refreshData();
+        await Promise.all([refreshData(), refreshDashboard()]);
       } catch (refreshReason) {
         const refreshMessage =
           refreshReason instanceof Error ? refreshReason.message : "Could not refresh POS data";
@@ -672,7 +684,11 @@ function App() {
         </div>
 
         {tab === "dashboard" && dashboard && (
-          <Dashboard data={dashboard} />
+          <Dashboard
+            data={dashboard}
+            period={dashboardPeriod}
+            onPeriodChange={setDashboardPeriod}
+          />
         )}
         {tab === "checkout" && (
           <Checkout

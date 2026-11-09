@@ -2049,17 +2049,51 @@ app.post("/api/payassure/settlements/:id/retry", requireAuth, async (req, res, n
   });
 });
 
-app.get("/api/dashboard", requireAuth, async (_req, res, next) => {
+app.get("/api/dashboard", requireAuth, async (req, res, next) => {
   try {
+    const periodResult = z.enum(["today", "week", "month", "all-time"]).safeParse(
+      req.query.period ?? "today",
+    );
+    if (!periodResult.success) {
+      res.status(400).json({ error: "Choose today, week, month, or all-time for the dashboard period" });
+      return;
+    }
+    const period = periodResult.data;
+    const bounds = await pool.query(
+      `WITH activity_dates AS (
+         SELECT created_at::date AS activity_date FROM sales
+         UNION ALL
+         SELECT created_at::date AS activity_date FROM failed_checkout_attempts
+       ),
+       first_activity AS (
+         SELECT MIN(activity_date) AS start_date FROM activity_dates
+       ),
+       period_bounds AS (
+         SELECT CASE $1::text
+                  WHEN 'today' THEN CURRENT_DATE
+                  WHEN 'week' THEN date_trunc('week', CURRENT_DATE)::date
+                  WHEN 'month' THEN date_trunc('month', CURRENT_DATE)::date
+                  ELSE COALESCE(first_activity.start_date, CURRENT_DATE)
+                END AS start_date,
+                CURRENT_DATE AS end_date
+         FROM first_activity
+       )
+       SELECT start_date::text AS "startDate",
+              end_date::text AS "endDate",
+              GREATEST(end_date - start_date + 1, 1)::int AS "periodDays"
+       FROM period_bounds`,
+      [period],
+    );
+    const { startDate, endDate, periodDays } = bounds.rows[0];
     const [sales, items, supplierCosts, failures, transactions] = await Promise.all([
       pool.query(
-        `SELECT CURRENT_DATE::text AS date,
-                COUNT(*) AS "successfulTransactions",
+        `SELECT COUNT(*) AS "successfulTransactions",
                 COALESCE(SUM(total_cents), 0)::text AS "incomeCents"
          FROM sales
          WHERE status = 'completed'
-           AND created_at >= CURRENT_DATE
-           AND created_at < CURRENT_DATE + INTERVAL '1 day'`,
+           AND created_at >= $1::date
+           AND created_at < $2::date + INTERVAL '1 day'`,
+        [startDate, endDate],
       ),
       pool.query(
         `SELECT COALESCE(SUM(i.quantity), 0)::text AS "unitsSold",
@@ -2068,8 +2102,9 @@ app.get("/api/dashboard", requireAuth, async (_req, res, next) => {
                 COUNT(*) FILTER (WHERE i.buying_unit_price_cents IS NULL) AS "unpricedSaleLines"
          FROM sales s JOIN sale_items i ON i.sale_id = s.id
          WHERE s.status = 'completed'
-           AND s.created_at >= CURRENT_DATE
-           AND s.created_at < CURRENT_DATE + INTERVAL '1 day'`,
+           AND s.created_at >= $1::date
+           AND s.created_at < $2::date + INTERVAL '1 day'`,
+        [startDate, endDate],
       ),
       pool.query(
         `SELECT COALESCE(i.supplier_id, p.supplier_id) AS "supplierId",
@@ -2083,20 +2118,22 @@ app.get("/api/dashboard", requireAuth, async (_req, res, next) => {
          JOIN products p ON p.id = i.product_id
          JOIN suppliers supplier ON supplier.id = COALESCE(i.supplier_id, p.supplier_id)
          WHERE s.status = 'completed'
-           AND s.created_at >= CURRENT_DATE
-           AND s.created_at < CURRENT_DATE + INTERVAL '1 day'
+           AND s.created_at >= $1::date
+           AND s.created_at < $2::date + INTERVAL '1 day'
          GROUP BY COALESCE(i.supplier_id, p.supplier_id),
                   COALESCE(i.supplier_name, supplier.name)
          ORDER BY SUM(i.buying_unit_price_cents::bigint * i.quantity)
                     FILTER (WHERE i.buying_unit_price_cents IS NOT NULL) DESC NULLS LAST,
                   "supplierName"`,
+        [startDate, endDate],
       ),
       pool.query(
         `SELECT COUNT(*) AS count,
                 COALESCE(SUM(total_cents), 0)::text AS "failedAmountCents"
          FROM failed_checkout_attempts
-         WHERE created_at >= CURRENT_DATE
-           AND created_at < CURRENT_DATE + INTERVAL '1 day'`,
+         WHERE created_at >= $1::date
+           AND created_at < $2::date + INTERVAL '1 day'`,
+        [startDate, endDate],
       ),
       pool.query(
         `SELECT * FROM (
@@ -2112,8 +2149,8 @@ app.get("/api/dashboard", requireAuth, async (_req, res, next) => {
                   settlement.next_attempt_at AS "nextRetryAt"
            FROM sales s
            LEFT JOIN payassure_settlements settlement ON settlement.sale_id = s.id
-           WHERE (s.created_at >= CURRENT_DATE
-                  AND s.created_at < CURRENT_DATE + INTERVAL '1 day')
+           WHERE (s.created_at >= $1::date
+                  AND s.created_at < $2::date + INTERVAL '1 day')
               OR settlement.status IN (
                 'queued', 'processing', 'accepted', 'failed', 'retrying',
                 'partially_failed', 'awaiting_reconciliation'
@@ -2127,8 +2164,8 @@ app.get("/api/dashboard", requireAuth, async (_req, res, next) => {
                   NULL::text AS "settlementError", NULL::integer AS "settlementAttemptCount",
                   NULL::timestamptz AS "nextRetryAt"
            FROM failed_checkout_attempts
-           WHERE created_at >= CURRENT_DATE
-             AND created_at < CURRENT_DATE + INTERVAL '1 day'
+           WHERE created_at >= $1::date
+             AND created_at < $2::date + INTERVAL '1 day'
          ) AS recent_transactions
          ORDER BY CASE WHEN status = 'pending'
                           OR "settlementStatus" IN (
@@ -2138,14 +2175,20 @@ app.get("/api/dashboard", requireAuth, async (_req, res, next) => {
                        THEN 0 ELSE 1 END,
                   "createdAt" DESC
          LIMIT 50`,
+        [startDate, endDate],
       ),
     ]);
 
     res.json({
-      date: sales.rows[0].date,
+      period,
+      date: endDate,
+      startDate,
       successfulTransactions: Number(sales.rows[0].successfulTransactions),
       failedTransactions: Number(failures.rows[0].count),
       incomeCents: Number(sales.rows[0].incomeCents),
+      averageSalesPerDayCents: Math.round(
+        Number(sales.rows[0].incomeCents) / periodDays,
+      ),
       unitsSold: Number(items.rows[0].unitsSold),
       supplierCostCents: Number(items.rows[0].supplierCostCents),
       unpricedSaleLines: Number(items.rows[0].unpricedSaleLines),
@@ -2191,7 +2234,7 @@ app.get("/api/sales", requireAuth, async (_req, res, next) => {
   }
 });
 
-if (process.env.NODE_ENV === "production") {
+if (process.env.NODE_ENV === "production" && !process.env.NETLIFY) {
   const webDirectory = path.resolve(__dirname, "../../../web/dist");
   app.use(express.static(webDirectory));
   app.get("*", (_req, res) => res.sendFile(path.join(webDirectory, "index.html")));
@@ -2209,11 +2252,22 @@ app.use(
   },
 );
 
-initializeDatabase()
-  .then(() => {
-    app.listen(port, () => console.log(`POS server listening on port ${port}`));
-  })
-  .catch((error: unknown) => {
-    console.error("Could not initialize the database:", error);
-    process.exitCode = 1;
-  });
+let databaseInitialization: Promise<void> | undefined;
+
+export function ensureDatabaseInitialized(): Promise<void> {
+  databaseInitialization ??= initializeDatabase();
+  return databaseInitialization;
+}
+
+export { app };
+
+if (require.main === module) {
+  ensureDatabaseInitialized()
+    .then(() => {
+      app.listen(port, () => console.log(`POS server listening on port ${port}`));
+    })
+    .catch((error: unknown) => {
+      console.error("Could not initialize the database:", error);
+      process.exitCode = 1;
+    });
+}

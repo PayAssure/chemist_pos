@@ -1,0 +1,43 @@
+[build]
+  command = "npm run build"
+  publish = "web/dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions."api"]
+  included_files = ["dist/server/schema.sql"]
+
+[dev]
+  command = "npm run dev:web"
+  targetPort = 5173
+  port = 8888
+  functionsPort = 9999
+  autoLaunch = false
+
+[[redirects]]
+  from = "/api"
+  to = "/.netlify/functions/api/api"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/webhook"
+  to = "/.netlify/functions/api/webhook"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

@@ -19,6 +19,12 @@ npm run dev
 
 The API applies the schema and additive pharmacy migrations on startup. The web UI is available at `http://localhost:5173`; the API uses the `PORT` value from `.env` (default `3000`), and the web development proxy forwards `/api` requests to that port.
 
+## Netlify deployment
+
+The Netlify configuration builds the frontend and server with `npm run build`, publishes `web/dist`, and serves the Express API and `/webhook` through a Netlify Function. Configure the required server environment variables (`DATABASE_URL`, `SESSION_SECRET`, and any PayAssure settings) in the Netlify site settings; do not commit `.env`.
+
+Run the app locally through Netlify with `npx netlify dev`. To build and deploy the production site in one command, run `npx netlify deploy --build --prod` after linking the site with the Netlify CLI.
+
 Create a normal staff account privately; there is no public registration. Passwords must be at least 12 characters. For a localhost development database only, the private provisioning command allows a minimum of 8 characters for disposable test accounts:
 
 ```sh
