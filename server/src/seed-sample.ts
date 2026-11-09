@@ -62,6 +62,7 @@ const requestedSampleUsers = [
   "kimaniwilfred95@gmail.com",
   "zionlandfarmcareltd@gmail.com",
 ];
+const allSampleUsers = [...requestedSampleUsers, ...sampleUsers];
 const supplierNames = [
   "Central Medical Wholesalers",
   "Green Cross Distributors",
@@ -93,6 +94,17 @@ function expiryDate(daysFromToday: number): string {
 
 function generatedPassword(): string {
   return randomBytes(18).toString("base64url");
+}
+
+function printNewCredentials(
+  credentials: Array<{ email: string; password: string }>,
+): void {
+  if (!credentials.length) return;
+  console.log("\nOne-time sample user credentials:");
+  for (const credential of credentials) {
+    console.log(`${credential.email}  ${credential.password}`);
+  }
+  console.log("Save these credentials now; passwords are not stored in recoverable form.");
 }
 
 async function seedDashboardSampleData(client: PoolClient): Promise<void> {
@@ -270,33 +282,66 @@ async function seedSampleData(): Promise<void> {
       "SELECT pg_advisory_xact_lock(hashtext($1))",
       ["payassure:seed-sample"],
     );
-    const completedSeed = await client.query(
-      "SELECT 1 FROM sample_seed_runs WHERE seed_name = $1",
-      ["sample"],
-    );
-    if (completedSeed.rowCount) {
-      await client.query("COMMIT");
-      console.log("Sample seed already completed; no data was changed.");
-      return;
-    }
-
     const requestedUserPassword = process.env.POS_SAMPLE_USER_PASSWORD;
     if (!requestedUserPassword || requestedUserPassword.length < 12) {
       throw new Error(
         "Set POS_SAMPLE_USER_PASSWORD to a password at least 12 characters long.",
       );
     }
+    const requestedUserPasswordHash = await bcrypt.hash(
+      requestedUserPassword,
+      12,
+    );
 
     for (const email of requestedSampleUsers) {
-      const requestedUserPasswordHash = await bcrypt.hash(
-        requestedUserPassword,
-        12,
-      );
       await client.query(
         `INSERT INTO users (email, password_hash) VALUES ($1, $2)
          ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
         [email, requestedUserPasswordHash],
       );
+    }
+
+    const userRows: Array<{ id: number; email: string }> = [];
+    for (const email of sampleUsers) {
+      const existingUser = await client.query(
+        "SELECT id, email FROM users WHERE email = $1",
+        [email],
+      );
+      if (existingUser.rowCount) {
+        userRows.push({
+          id: Number(existingUser.rows[0].id),
+          email: existingUser.rows[0].email,
+        });
+        continue;
+      }
+      const password = generatedPassword();
+      const passwordHash = await bcrypt.hash(password, 12);
+      const inserted = await client.query(
+        `INSERT INTO users (email, password_hash) VALUES ($1, $2)
+         RETURNING id, email`,
+        [email, passwordHash],
+      );
+      userRows.push({
+        id: Number(inserted.rows[0].id),
+        email: inserted.rows[0].email,
+      });
+      newCredentials.push({ email, password });
+    }
+
+    const completedSeed = await client.query(
+      "SELECT 1 FROM sample_seed_runs WHERE seed_name = $1",
+      ["sample"],
+    );
+    if (completedSeed.rowCount) {
+      await client.query("COMMIT");
+      console.log(
+        `Ensured sample login accounts: ${allSampleUsers.join(", ")}`,
+      );
+      printNewCredentials(newCredentials);
+      console.log(
+        "Sample data was already seeded; no sample data was changed.",
+      );
+      return;
     }
 
     const existingData = await client.query(
@@ -325,8 +370,9 @@ async function seedSampleData(): Promise<void> {
         );
         await client.query("COMMIT");
         console.log(
-          `Ensured sample login accounts: ${requestedSampleUsers.join(", ")}`,
+          `Ensured sample login accounts: ${allSampleUsers.join(", ")}`,
         );
+        printNewCredentials(newCredentials);
         console.log(
           "Existing sample data was recorded as seeded; no sample data was changed.",
         );
@@ -340,39 +386,13 @@ async function seedSampleData(): Promise<void> {
       );
       await client.query("COMMIT");
       console.log(
-        `Ensured sample login accounts: ${requestedSampleUsers.join(", ")}`,
+        `Ensured sample login accounts: ${allSampleUsers.join(", ")}`,
       );
+      printNewCredentials(newCredentials);
       console.log(
         "Added 12 sample sales (4 on credit) and 3 failed checkout attempts for the dashboard.",
       );
       return;
-    }
-
-    const userRows: Array<{ id: number; email: string }> = [];
-    for (const email of sampleUsers) {
-      const existingUser = await client.query(
-        "SELECT id, email FROM users WHERE email = $1",
-        [email],
-      );
-      if (existingUser.rowCount) {
-        userRows.push({
-          id: Number(existingUser.rows[0].id),
-          email: existingUser.rows[0].email,
-        });
-        continue;
-      }
-      const password = generatedPassword();
-      const passwordHash = await bcrypt.hash(password, 12);
-      const inserted = await client.query(
-        `INSERT INTO users (email, password_hash) VALUES ($1, $2)
-         RETURNING id, email`,
-        [email, passwordHash],
-      );
-      userRows.push({
-        id: Number(inserted.rows[0].id),
-        email: inserted.rows[0].email,
-      });
-      newCredentials.push({ email, password });
     }
 
     const suppliers: number[] = [];
@@ -568,22 +588,14 @@ async function seedSampleData(): Promise<void> {
     );
     await client.query("COMMIT");
     console.log(
-      `Ensured sample login accounts: ${requestedSampleUsers.join(", ")}`,
+      `Ensured sample login accounts: ${allSampleUsers.join(", ")}`,
     );
+    printNewCredentials(newCredentials);
     console.log(
       `Created ${supplierNames.length} suppliers, ${medicines.length} medicines, ` +
         `${medicines.length * 2} batches, and ${transactionCount} completed sale records, ` +
         "including 12 sales (4 on credit) and 3 failed checkout attempts today.",
     );
-    if (newCredentials.length) {
-      console.log("\nOne-time sample user credentials:");
-      for (const credential of newCredentials) {
-        console.log(`${credential.email}  ${credential.password}`);
-      }
-      console.log("Save these credentials now; passwords are not stored in recoverable form.");
-    } else {
-      console.log("Sample users already existed, so their passwords were not changed.");
-    }
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
