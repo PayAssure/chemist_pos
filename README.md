@@ -44,13 +44,13 @@ POS_USER_EMAIL=staff@example.test POS_USER_PASSWORD='use-a-long-unique-password'
 
 ## Sample data and users
 
-For a local development database only, set `NODE_ENV=development` and `POS_ALLOW_SAMPLE_DATA=true`, then run:
+To enable sample seeding, set `POS_ALLOW_SAMPLE_DATA=true` and provide `POS_SAMPLE_USER_PASSWORD` (at least 12 characters). The seeder can run against either a local or production database:
 
 ```sh
 NODE_ENV=development POS_ALLOW_SAMPLE_DATA=true POS_SAMPLE_USER_PASSWORD='Password@123' npm run seed
 ```
 
-The seeder refuses to run outside development or against a non-localhost database. It creates or updates `kimaniwilfred95@gmail.com` and `zionlandfarmcareltd@gmail.com` with the password supplied in `POS_SAMPLE_USER_PASSWORD`, and ensures the three private demo users (`sample.cashier@payassure.local`, `sample.pharmacist@payassure.local`, and `sample.manager@payassure.local`) exist. Use the shared local-development password only for the two named accounts; do not reuse it for production or other services. On an empty sample dataset, it also creates 12 suppliers, 46 medicines, 92 batches, 360 completed transactions, and three recent failed checkout attempts. The sample includes 12 transactions for today, four on credit, so the dashboard has sales, supplier cost, credit, and failed-checkout data to display immediately. Strong one-time passwords for newly created demo users are printed; save them then. The database records successful completion in `sample_seed_runs`. Subsequent runs ensure the sample login accounts but skip seeding the sample data again. Sample customer contact details and suppliers are demo-only; supplier IDs use clearly marked `DEMO-PA-TEST-*` values and must not be used for real PayAssure payments. Sample M-Pesa transactions are never generated.
+Set `DATABASE_URL` to the intended database before running the seeder. In production, use a unique strong `POS_SAMPLE_USER_PASSWORD`; the seeder creates or updates `kimaniwilfred95@gmail.com` and `zionlandfarmcareltd@gmail.com` with that password and ensures the three private demo users (`sample.cashier@payassure.local`, `sample.pharmacist@payassure.local`, and `sample.manager@payassure.local`) exist. On an empty sample dataset, it also creates 12 suppliers, 46 medicines, 92 batches, 360 completed transactions, and three recent failed checkout attempts. The sample includes 12 transactions for today, four on credit, so the dashboard has sales, supplier cost, credit, and failed-checkout data to display immediately. Strong one-time passwords for newly created demo users are printed; save them then. The database records successful completion in `sample_seed_runs`. Subsequent runs ensure the sample login accounts but skip seeding the sample data again. Sample customer contact details and suppliers are demo-only; supplier IDs use clearly marked `DEMO-PA-TEST-*` values and must not be used for real PayAssure payments. Sample M-Pesa transactions are never generated.
 
 ## API
 

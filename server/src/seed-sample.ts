@@ -260,17 +260,10 @@ async function seedDashboardSampleData(client: PoolClient): Promise<void> {
 }
 
 async function seedSampleData(): Promise<void> {
-  if (
-    process.env.NODE_ENV !== "development" ||
-    process.env.POS_ALLOW_SAMPLE_DATA !== "true"
-  ) {
+  if (process.env.POS_ALLOW_SAMPLE_DATA !== "true") {
     throw new Error(
-      "Sample seeding is development-only. Set NODE_ENV=development and POS_ALLOW_SAMPLE_DATA=true.",
+      "Sample seeding is disabled. Set POS_ALLOW_SAMPLE_DATA=true to enable it.",
     );
-  }
-  const databaseUrl = new URL(process.env.DATABASE_URL ?? "");
-  if (!["localhost", "127.0.0.1", "::1"].includes(databaseUrl.hostname)) {
-    throw new Error("Sample seeding only runs against a localhost PostgreSQL database.");
   }
 
   await initializeDatabase();
