@@ -1,32 +1,11 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import {
+  payassureWebhookEventTypes,
+  type PayassureWebhookEvent,
+  type PayassureWebhookEventType,
+} from "./payassure-webhook-types";
 
-export const payassureWebhookEventTypes = [
-  "payment.collection.succeeded",
-  "payment.collection.failed",
-  "payment.settlement.started",
-  "payment.settlement.progress",
-  "payment.settlement.partially_failed",
-  "payment.settlement.retrying",
-  "payment.settlement.completed",
-  "payment.settlement.reconciliation_required",
-] as const;
-
-export type PayassureWebhookEventType = (typeof payassureWebhookEventTypes)[number];
-
-export type PayassureWebhookEvent = {
-  id: string;
-  type: PayassureWebhookEventType;
-  recipientMerchantId: string;
-  settlementId: string;
-  settlementReference: string;
-  merchantTransactionReference: string;
-  amount: number;
-  currency: string;
-  createdAt: string | null;
-  details: Record<string, unknown>;
-  payouts: unknown[];
-  payload: Record<string, unknown>;
-};
+export { verifyPayassureWebhookSignature } from "./payassure-webhook-signature";
+export type { PayassureWebhookEvent, PayassureWebhookEventType } from "./payassure-webhook-types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -44,36 +23,6 @@ export function readPayassureWebhookRecipient(rawBody: Buffer): string | null {
   }
   const merchantId = parsed.data.recipient.merchant_id;
   return typeof merchantId === "string" && merchantId.trim() ? merchantId.trim() : null;
-}
-
-export function verifyPayassureWebhookSignature(
-  rawBody: Buffer,
-  timestampHeader: string | undefined,
-  signatureHeader: string | undefined,
-  secret: string,
-  nowSeconds = Math.floor(Date.now() / 1000),
-): boolean {
-  if (!timestampHeader || !/^\d+$/.test(timestampHeader) || !signatureHeader) return false;
-  const signatureParts = new Map<string, string>();
-  for (const part of signatureHeader.split(",")) {
-    const separator = part.indexOf("=");
-    if (separator <= 0) continue;
-    signatureParts.set(part.slice(0, separator).trim(), part.slice(separator + 1).trim());
-  }
-  const timestamp = signatureParts.get("t");
-  const suppliedHex = signatureParts.get("v1");
-  if (timestamp !== timestampHeader || !suppliedHex || !/^[a-f0-9]{64}$/i.test(suppliedHex)) {
-    return false;
-  }
-
-  const receivedAt = Number(timestampHeader);
-  if (!Number.isSafeInteger(receivedAt) || Math.abs(nowSeconds - receivedAt) > 300) return false;
-
-  const expected = createHmac("sha256", secret)
-    .update(`${timestampHeader}.${rawBody.toString("utf8")}`)
-    .digest();
-  const supplied = Buffer.from(suppliedHex, "hex");
-  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
 export function parsePayassureWebhookEvent(

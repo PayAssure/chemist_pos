@@ -1,0 +1,76 @@
+import type { Medicine } from "./types";
+
+export const medicineCatalog: Array<[string, string, boolean, number]> = [
+  ["Paracetamol 500 mg tablets", "Paracetamol", false, 120],
+  ["Ibuprofen 200 mg tablets", "Ibuprofen", false, 180],
+  ["Cetirizine 10 mg tablets", "Cetirizine", false, 150],
+  ["Oral rehydration salts sachets", "Oral rehydration salts", false, 80],
+  ["Zinc 20 mg tablets", "Zinc sulfate", false, 110],
+  ["Antacid chewable tablets", "Calcium carbonate", false, 130],
+  ["Vitamin C 500 mg tablets", "Ascorbic acid", false, 200],
+  ["Multivitamin tablets", "Multivitamins", false, 350],
+  ["Loratadine 10 mg tablets", "Loratadine", false, 160],
+  ["Topical antiseptic solution", "Chlorhexidine", false, 240],
+  ["Amoxicillin 500 mg capsules", "Amoxicillin", true, 480],
+  ["Azithromycin 500 mg tablets", "Azithromycin", true, 650],
+  ["Metformin 500 mg tablets", "Metformin", true, 220],
+  ["Amlodipine 5 mg tablets", "Amlodipine", true, 250],
+  ["Losartan 50 mg tablets", "Losartan", true, 390],
+  ["Atorvastatin 20 mg tablets", "Atorvastatin", true, 500],
+  ["Omeprazole 20 mg capsules", "Omeprazole", true, 270],
+  ["Salbutamol inhaler", "Salbutamol", true, 750],
+  ["Hydrocortisone 1% cream", "Hydrocortisone", true, 280],
+  ["Fluconazole 150 mg capsules", "Fluconazole", true, 300],
+  ["Doxycycline 100 mg capsules", "Doxycycline", true, 420],
+  ["Ciprofloxacin 500 mg tablets", "Ciprofloxacin", true, 470],
+  ["Loperamide 2 mg capsules", "Loperamide", false, 190],
+  ["Iron and folic acid tablets", "Ferrous sulfate and folic acid", false, 160],
+  ["Folic acid 5 mg tablets", "Folic acid", false, 100],
+  ["Calcium and vitamin D tablets", "Calcium and vitamin D", false, 340],
+  ["Eye lubricant drops", "Carboxymethylcellulose", false, 390],
+  ["Clotrimazole 1% cream", "Clotrimazole", false, 210],
+  ["Miconazole 2% cream", "Miconazole", false, 250],
+  ["Diclofenac 50 mg tablets", "Diclofenac", true, 230],
+  ["Prednisolone 5 mg tablets", "Prednisolone", true, 260],
+  ["Cotrimoxazole 480 mg tablets", "Sulfamethoxazole and trimethoprim", true, 190],
+  ["Propranolol 40 mg tablets", "Propranolol", true, 180],
+  ["Hydrochlorothiazide 25 mg tablets", "Hydrochlorothiazide", true, 150],
+  ["Furosemide 40 mg tablets", "Furosemide", true, 180],
+  ["Glibenclamide 5 mg tablets", "Glibenclamide", true, 130],
+  ["Fluoxetine 20 mg capsules", "Fluoxetine", true, 350],
+  ["Lansoprazole 30 mg capsules", "Lansoprazole", true, 300],
+  ["Eye antibiotic drops", "Chloramphenicol", true, 270],
+  ["Oral iron tablets", "Ferrous fumarate", false, 180],
+  ["Nasal saline spray", "Sodium chloride", false, 330],
+  ["Antifungal powder", "Clotrimazole", false, 260],
+  ["Skin emollient cream", "Emollient blend", false, 420],
+  ["Gauze dressing pack", "Medical dressing", false, 140],
+  ["Adhesive bandage pack", "Medical dressing", false, 90],
+];
+
+export const sampleUsers = [
+  "sample.cashier@payassure.local",
+  "sample.pharmacist@payassure.local",
+  "sample.manager@payassure.local",
+];
+export const requestedSampleUsers = [
+  "kimaniwilfred95@gmail.com",
+  "zionlandfarmcareltd@gmail.com",
+];
+export const allSampleUsers = [...requestedSampleUsers, ...sampleUsers];
+export const supplierNames = [
+  "Central Medical Wholesalers",
+  "Green Cross Distributors",
+  "City Health Supply",
+  "Community Pharmacy Supply",
+  "Coastline Medical Trading",
+  "Highland Health Distributors",
+  "Metro Pharma Wholesale",
+  "Unity Medical Suppliers",
+  "Prime Care Distributors",
+  "Eastgate Pharma Supply",
+  "Lakeside Medical Wholesale",
+  "Trusted Health Products",
+];
+
+export type { Medicine };

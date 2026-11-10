@@ -10,7 +10,7 @@
   node_bundler = "esbuild"
 
 [functions."api"]
-  included_files = ["dist/server/schema.sql"]
+  included_files = ["dist/server/schema/*.sql"]
 
 [dev]
   command = "npm run dev:web"

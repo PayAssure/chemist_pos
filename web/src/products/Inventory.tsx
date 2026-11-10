@@ -1,40 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import InventoryForms from "./InventoryForms";
 import InventoryTable from "./InventoryTable";
-import type { Batch, Product, Supplier } from "../types";
+import type { InventoryProps } from "./InventoryTypes";
 import { navigate } from "../lib/navigation";
-
-function inventoryRoute(pathname: string) {
-  const segments = pathname.split("/").filter(Boolean);
-  if (segments[0] !== "product") {
-    return { modal: null, productId: null, batchId: null } as const;
-  }
-  if (segments[1] === "add") {
-    return { modal: "product", productId: null, batchId: null } as const;
-  }
-  const productId = Number(segments[1]);
-  if (!Number.isSafeInteger(productId) || productId < 1) {
-    return { modal: null, productId: null, batchId: null } as const;
-  }
-  const batchSegmentIndex = segments.indexOf("batch");
-  const batchId = batchSegmentIndex >= 0 ? Number(segments[batchSegmentIndex + 1]) : null;
-  return {
-    modal: "selected-product",
-    productId,
-    batchId: batchId !== null && Number.isSafeInteger(batchId) && batchId > 0 ? batchId : null,
-  } as const;
-}
-
-type InventoryProps = {
-  products: Product[];
-  batches: Batch[];
-  suppliers: Supplier[];
-  onSaveProduct: (event: FormEvent<HTMLFormElement>) => Promise<boolean>;
-  onUpdateProduct: (event: FormEvent<HTMLFormElement>, productId: number) => Promise<boolean>;
-  onUpdateBuyingPrice: (productId: number, buyingPriceCents: number) => Promise<boolean>;
-  onUpdateBatchExpiry: (batchId: number, expiryDate: string) => Promise<boolean>;
-  onAddStock: (batch: Batch, incomingStock: number) => Promise<boolean>;
-};
+import { inventoryRoute } from "./inventoryRoute";
 
 function Inventory(props: InventoryProps) {
   const [route, setRoute] = useState(() => inventoryRoute(window.location.pathname));

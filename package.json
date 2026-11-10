@@ -7,7 +7,7 @@
     "dev:server": "tsx watch server/src/index.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "build": "npm run build:server && npm run build:web",
-    "build:server": "tsc -p server/tsconfig.json && cp server/schema.sql dist/server/schema.sql",
+    "build:server": "tsc -p server/tsconfig.json && mkdir -p dist/server/schema && cp server/schema/*.sql dist/server/schema/",
     "build:web": "tsc -p web/tsconfig.json && vite build --config web/vite.config.ts",
     "start": "node dist/server/src/index.js",
     "user:create": "tsx server/src/create-user.ts",
