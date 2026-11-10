@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Checkout from "./checkout/Checkout";
 import Login from "./auth/Login";
 import Inventory from "./products/Inventory";
@@ -101,6 +101,158 @@ function ToastViewport({ error, notice, onDismiss }: ToastViewportProps) {
         <button className="toast-dismiss" type="button" aria-label="Dismiss notification" onClick={onDismiss}>×</button>
       </div>
     </div>
+  );
+}
+
+const appTabs: Tab[] = [
+  "dashboard",
+  "checkout",
+  "products",
+  "suppliers",
+  "payassure-data",
+  "history",
+  "support",
+];
+
+function tabLabel(name: Tab): string {
+  switch (name) {
+    case "dashboard":
+      return "Dashboard";
+    case "checkout":
+      return "Checkout";
+    case "products":
+      return "Products & stock";
+    case "suppliers":
+      return "Suppliers";
+    case "payassure-data":
+      return "PayAssure data";
+    case "history":
+      return "Sales history";
+    case "support":
+      return "Contact support";
+  }
+}
+
+function HeaderNavigation({ tab }: { tab: Tab }) {
+  const navRef = useRef<HTMLElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const overflowRef = useRef<HTMLDetailsElement>(null);
+  const [visibleIndexes, setVisibleIndexes] = useState<number[]>(appTabs.map((_, index) => index));
+
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const measure = measureRef.current;
+    if (!nav || !measure) return;
+
+    const updateVisibleTabs = () => {
+      const tabElements = Array.from(measure.querySelectorAll<HTMLElement>(".tab"));
+      const overflowElement = measure.querySelector<HTMLElement>(".tab-overflow-trigger");
+      if (!overflowElement || tabElements.length !== appTabs.length) return;
+
+      const availableWidth = nav.clientWidth;
+      const gap = Number.parseFloat(window.getComputedStyle(nav).columnGap) || 0;
+      const widths = tabElements.map((element) => element.getBoundingClientRect().width);
+      const allTabsWidth =
+        widths.reduce((total, width) => total + width, 0) + gap * (widths.length - 1);
+      let nextIndexes: number[];
+
+      if (allTabsWidth <= availableWidth) {
+        nextIndexes = appTabs.map((_, index) => index);
+      } else {
+        const overflowWidth = overflowElement.getBoundingClientRect().width;
+        const activeIndex = appTabs.indexOf(tab);
+        const selected = new Set<number>();
+        let usedWidth = 0;
+
+        const tryAdd = (index: number) => {
+          const nextWidth =
+            usedWidth +
+            (selected.size ? gap : 0) +
+            widths[index] +
+            gap +
+            overflowWidth;
+          if (nextWidth > availableWidth) return;
+          usedWidth += (selected.size ? gap : 0) + widths[index];
+          selected.add(index);
+        };
+
+        tryAdd(activeIndex);
+        appTabs.forEach((_, index) => {
+          if (index !== activeIndex) tryAdd(index);
+        });
+        nextIndexes = Array.from(selected).sort((left, right) => left - right);
+      }
+
+      setVisibleIndexes((current) =>
+        current.length === nextIndexes.length &&
+        current.every((index, position) => index === nextIndexes[position])
+          ? current
+          : nextIndexes,
+      );
+    };
+
+    updateVisibleTabs();
+    const observer = new ResizeObserver(updateVisibleTabs);
+    observer.observe(nav);
+    observer.observe(measure);
+    measure.querySelectorAll(".tab, .tab-overflow-trigger").forEach((element) => {
+      observer.observe(element);
+    });
+    return () => observer.disconnect();
+  }, [tab]);
+
+  const hiddenTabs = appTabs.filter((_, index) => !visibleIndexes.includes(index));
+
+  return (
+    <nav ref={navRef} className="header-nav" aria-label="POS sections">
+      {appTabs.map((name, index) =>
+        visibleIndexes.includes(index) ? (
+          <button
+            key={name}
+            className={`tab ${tab === name ? "active" : ""}`}
+            aria-current={tab === name ? "page" : undefined}
+            onClick={() => navigate(pathForTab(name))}
+          >
+            {tabLabel(name)}
+          </button>
+        ) : null,
+      )}
+      {hiddenTabs.length > 0 && (
+        <details ref={overflowRef} className="tab-overflow">
+          <summary className="tab-overflow-trigger" aria-label="More sections" title="More sections">
+            <span aria-hidden="true">⋯</span>
+          </summary>
+          <div className="tab-overflow-menu">
+            {hiddenTabs.map((name) => (
+              <button
+                key={name}
+                className={`tab-overflow-item ${tab === name ? "active" : ""}`}
+                aria-current={tab === name ? "page" : undefined}
+                onClick={() => {
+                  navigate(pathForTab(name));
+                  if (overflowRef.current) overflowRef.current.open = false;
+                }}
+              >
+                {tabLabel(name)}
+              </button>
+            ))}
+          </div>
+        </details>
+      )}
+      <div ref={measureRef} className="header-nav-measure" aria-hidden="true">
+        {appTabs.map((name) => (
+          <button
+            key={name}
+            type="button"
+            className={`tab ${tab === name ? "active" : ""}`}
+            tabIndex={-1}
+          >
+            {tabLabel(name)}
+          </button>
+        ))}
+        <button type="button" className="tab-overflow-trigger" tabIndex={-1}>⋯</button>
+      </div>
+    </nav>
   );
 }
 
@@ -587,32 +739,7 @@ function App() {
           <span className="brand-mark">Z</span>
           <span>Zion Chemist <strong>POS</strong></span>
         </a>
-        <nav className="header-nav" aria-label="POS sections">
-          {(["dashboard", "checkout", "products", "suppliers", "payassure-data", "history", "support"] as Tab[]).map((name) => (
-            <button
-              key={name}
-              className={`tab ${tab === name ? "active" : ""}`}
-              aria-current={tab === name ? "page" : undefined}
-              onClick={() => {
-                navigate(pathForTab(name));
-              }}
-            >
-              {name === "dashboard"
-                ? "Dashboard"
-                : name === "checkout"
-                ? "Checkout"
-                : name === "products"
-                  ? "Products & stock"
-                  : name === "suppliers"
-                    ? "Suppliers"
-                    : name === "payassure-data"
-                      ? "PayAssure data"
-                      : name === "history"
-                        ? "Sales history"
-                        : "Contact support"}
-            </button>
-          ))}
-        </nav>
+        <HeaderNavigation tab={tab} />
         <details className="account-menu">
           <summary aria-label="Open account menu" title="Account">
             {email.slice(0, 1).toUpperCase()}

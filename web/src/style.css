@@ -22,15 +22,40 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .48; }
 .app-shell { min-height: 100vh; min-height: 100svh; overflow-x: clip; }
 .topbar {
-  min-height: 72px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 20px;
+  min-height: 72px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 20px;
   padding: 0 clamp(20px, 3vw, 56px); background: #fff;
   border-bottom: 1px solid var(--border);
 }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: #18251f; text-decoration: none; font-family: Manrope, sans-serif; font-size: 16px; font-weight: 700; }
 .brand strong { color: var(--green); }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: white; background: var(--green); font-weight: 800; }
-.header-nav { display: flex; min-width: 0; justify-self: center; gap: 8px; align-self: stretch; }
-.header-nav .tab { display: inline-flex; align-items: center; justify-content: center; }
+.header-nav { position: relative; display: flex; width: 100%; min-width: 0; justify-self: stretch; justify-content: center; gap: 8px; align-self: stretch; }
+.header-nav .tab { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; white-space: nowrap; }
+.tab-overflow { position: relative; flex: 0 0 auto; align-self: center; }
+.tab-overflow-trigger {
+  display: grid; place-items: center; width: 42px; height: 42px; padding: 0;
+  border: 0; border-bottom: 3px solid transparent; background: none;
+  color: var(--muted); font-size: 24px; font-weight: 700; line-height: 1;
+  list-style: none; cursor: pointer;
+}
+.tab-overflow-trigger::-webkit-details-marker { display: none; }
+.tab-overflow-trigger:hover, .tab-overflow[open] > .tab-overflow-trigger { color: var(--green); background: #f3f6f4; }
+.tab-overflow-menu {
+  position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; display: flex;
+  min-width: 190px; flex-direction: column; padding: 6px; border: 1px solid var(--border);
+  border-radius: 12px; background: #fff; box-shadow: 0 12px 32px #18251f1a;
+}
+.tab-overflow-item {
+  width: 100%; border: 0; border-radius: 7px; padding: 11px 12px; background: none;
+  color: #35433b; text-align: left; font-size: 14px; font-weight: 600; white-space: nowrap;
+}
+.tab-overflow-item:hover, .tab-overflow-item.active { background: var(--green-light); color: var(--green); }
+.header-nav-measure {
+  position: absolute; top: 0; left: -10000px; display: flex; width: max-content;
+  gap: inherit; visibility: hidden; pointer-events: none;
+}
+.header-nav-measure .tab { flex: 0 0 auto; white-space: nowrap; }
+.header-nav-measure .tab-overflow-trigger { flex: 0 0 auto; }
 .account-menu { position: relative; justify-self: end; }
 .account-menu summary {
   display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%;
@@ -296,10 +321,10 @@ input:focus, select:focus, textarea:focus { border-color: #69a184; box-shadow: 0
     padding: 8px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
   }
   .header-nav {
-    grid-column: 1 / -1; grid-row: 2; justify-self: stretch; display: flex;
-    gap: 2px; margin-top: 6px; overflow-x: auto; scrollbar-width: thin;
+    grid-column: 1 / -1; grid-row: 2; justify-self: stretch;
+    gap: 2px; margin-top: 6px;
   }
-  .header-nav .tab { flex: 0 0 auto; }
+  .header-nav-measure { gap: inherit; }
   .main { padding: 28px max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); }
   .welcome { align-items: flex-start; gap: 14px; }
   .welcome-summary-cards { width: min(100%, 560px); }
@@ -324,7 +349,7 @@ input:focus, select:focus, textarea:focus { border-color: #69a184; box-shadow: 0
   .retailer-card-heading { flex-wrap: wrap; }
   .cart-panel { position: static; }
   .form-grid { grid-template-columns: 1fr; }
-  .tab { min-width: 0; min-height: 44px; white-space: normal; overflow-wrap: anywhere; padding: 8px 4px; font-size: 13px; line-height: 1.25; }
+  .tab { min-width: 0; min-height: 44px; padding: 8px 4px; font-size: 13px; line-height: 1.25; }
   .button { min-height: 44px; }
   .quantity button { flex-basis: 40px; width: 40px; height: 40px; }
   .table-wrap { margin-right: -4px; }
