@@ -8,6 +8,9 @@ import { initializeDatabase, pool } from "./db";
 import routes from "./routes";
 
 const app = express();
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
 const PgSession = connectPgSimple(session);
 const port = Number(process.env.PORT ?? 3000);
 const sessionSecret = process.env.SESSION_SECRET;
@@ -26,6 +29,29 @@ app.use(session({
   secret: sessionSecret, resave: false, saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 8 * 60 * 60 * 1000 },
 }));
+if (process.env.SESSION_DIAGNOSTICS === "true") {
+  app.use((req, _res, next) => {
+    if (
+      req.path.startsWith("/api/auth") ||
+      req.path.startsWith("/api/products") ||
+      req.path.startsWith("/api/batches") ||
+      req.path.startsWith("/api/suppliers") ||
+      req.path.startsWith("/api/dashboard") ||
+      req.path.startsWith("/api/sales") ||
+      req.path.startsWith("/api/payassure")
+    ) {
+      console.info("[Session Diagnostic]", {
+        method: req.method,
+        path: req.path,
+        secure: req.secure,
+        hasSession: Boolean(req.session),
+        hasSessionId: Boolean(req.sessionID),
+        hasAuthenticatedUser: Boolean(req.session?.userId),
+      });
+    }
+    next();
+  });
+}
 app.use(routes);
 
 if (process.env.NODE_ENV === "production" && !process.env.NETLIFY) {
