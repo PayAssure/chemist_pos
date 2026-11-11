@@ -38,7 +38,7 @@ The `httpOnly` flag prevents browser JavaScript from reading the session cookie.
 
 In production behind Render's HTTPS-terminating reverse proxy, Express must recognize the original request as secure so the secure cookie is issued correctly. The app trusts one proxy hop before setting up the session middleware. Keep this count aligned with the actual hosting topology; do not disable secure cookies to work around proxy configuration.
 
-Keep `SESSION_SECRET` stable across application instances and restarts if existing sessions are expected to remain valid. Rotating it will invalidate cookies signed with the previous secret. Use a high-entropy secret, do not put it in source control, and configure the same value wherever the application runs. The README requires `DATABASE_URL` and `SESSION_SECRET` for operation.
+Keep `SESSION_SECRET` stable across application instances and restarts if existing sessions or encrypted PayAssure tokens are expected to remain valid. Rotating it invalidates cookies signed with the previous secret and prevents decrypting stored PayAssure tokens until the server successfully obtains and stores a fresh PayAssure session. Configure the same value on every instance that shares the database. Use a high-entropy secret, do not put it in source control, and configure it wherever the application runs. The README requires `DATABASE_URL` and `SESSION_SECRET` for operation.
 
 ### Optional production session diagnostics
 
@@ -105,7 +105,7 @@ PayAssure's credentials are distinct from a staff member's POS credentials:
 - After successful POS password verification, if PayAssure is configured, the login handler attempts to refresh or establish the server's PayAssure session and register the webhook URL. This occurs before the POS session is regenerated and saved.
 - If that integration step fails, the error is included as `payassureError` in the otherwise successful POS login response. The staff user can still sign in; the UI displays a PayAssure sign-in warning.
 - PayAssure access/refresh tokens are stored separately in the singleton `payassure_tokens` row. [`server/src/payassure-token-store.ts`](./server/src/payassure-token-store.ts) refreshes existing tokens and falls back to PayAssure login when the refresh token is rejected with HTTP 401.
-- [`server/src/payassure-crypto.ts`](./server/src/payassure-crypto.ts) encrypts those tokens with AES-256-GCM. The encryption key is derived from `SESSION_SECRET`; changing that secret also prevents decrypting previously stored PayAssure tokens.
+- [`server/src/payassure-crypto.ts`](./server/src/payassure-crypto.ts) encrypts those tokens with AES-256-GCM. The encryption key is derived from `SESSION_SECRET`; changing that secret also prevents decrypting previously stored PayAssure tokens. If stored tokens cannot be decrypted, the server obtains a fresh PayAssure session and replaces the stored values only after login succeeds.
 
 This integration session is server-wide rather than one PayAssure session per POS user. Do not confuse it with the `connect.sid` cookie or use it as proof of staff authentication.
 

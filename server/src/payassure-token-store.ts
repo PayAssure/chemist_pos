@@ -2,7 +2,7 @@ import type { PoolClient } from "pg";
 import { pool } from "./db";
 import type { PayassureTokens } from "./payassure-types";
 import { PayassureHttpError } from "./payassure-types";
-import { decrypt, encrypt } from "./payassure-crypto";
+import { decrypt, encrypt, PayassureDecryptionError } from "./payassure-crypto";
 import { getConfig } from "./payassure-config";
 import { login, refresh } from "./payassure-auth-request";
 
@@ -15,16 +15,19 @@ async function readStoredTokens(client: PoolClient): Promise<PayassureTokens | n
     refresh_token: string | null;
     user_id: string | null;
   }>("SELECT access_token, refresh_token, user_id FROM payassure_tokens WHERE id = 1 FOR UPDATE");
+  let accessToken: string | null;
+  let refreshToken: string | null;
   try {
-    const accessToken = decrypt(result.rows[0]?.access_token ?? null);
-    const refreshToken = decrypt(result.rows[0]?.refresh_token ?? null);
-    const userId = result.rows[0]?.user_id;
-    return accessToken && refreshToken && userId
-      ? { accessToken, refreshToken, userId }
-      : null;
-  } catch {
-    return null;
+    accessToken = decrypt(result.rows[0]?.access_token ?? null);
+    refreshToken = decrypt(result.rows[0]?.refresh_token ?? null);
+  } catch (error) {
+    if (error instanceof PayassureDecryptionError) return null;
+    throw error;
   }
+  const userId = result.rows[0]?.user_id;
+  return accessToken && refreshToken && userId
+    ? { accessToken, refreshToken, userId }
+    : null;
 }
 
 async function storeTokens(client: PoolClient, tokens: PayassureTokens): Promise<void> {
@@ -64,18 +67,23 @@ export async function refreshPayassureSession(): Promise<void> {
 }
 
 export async function currentPayassureSession(): Promise<PayassureTokens> {
-  const result = await pool.query<{ access_token: string | null; user_id: string | null }>(
-    "SELECT access_token, user_id FROM payassure_tokens WHERE id = 1",
-  );
-  const token = decrypt(result.rows[0]?.access_token ?? null);
-  const userId = result.rows[0]?.user_id;
-  if (token && userId) {
-    const stored = await pool.query<{ refresh_token: string | null }>(
-      "SELECT refresh_token FROM payassure_tokens WHERE id = 1",
-    );
-    const refreshToken = decrypt(stored.rows[0]?.refresh_token ?? null);
-    if (refreshToken) return { accessToken: token, refreshToken, userId };
+  const result = await pool.query<{
+    access_token: string | null;
+    refresh_token: string | null;
+    user_id: string | null;
+  }>("SELECT access_token, refresh_token, user_id FROM payassure_tokens WHERE id = 1");
+  let token: string | null;
+  let refreshToken: string | null;
+  try {
+    token = decrypt(result.rows[0]?.access_token ?? null);
+    refreshToken = decrypt(result.rows[0]?.refresh_token ?? null);
+  } catch (error) {
+    if (!(error instanceof PayassureDecryptionError)) throw error;
+    await refreshPayassureSession();
+    return currentPayassureSession();
   }
+  const userId = result.rows[0]?.user_id;
+  if (token && refreshToken && userId) return { accessToken: token, refreshToken, userId };
   await refreshPayassureSession();
   return currentPayassureSession();
 }
