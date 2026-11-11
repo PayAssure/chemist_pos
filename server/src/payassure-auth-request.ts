@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { PayassureConfig, PayassureTokens } from "./payassure-types";
 import { maskIdentifier, safeEndpoint } from "./payassure-config";
 import { PayassureHttpError } from "./payassure-types";
-import { fetchPayassure, responseMetadata, responseSummary, transportErrorDetails } from "./payassure-transport";
+import { fetchPayassure, isTimeoutError, responseMetadata, responseSummary, safeTransportErrorDetails } from "./payassure-transport";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
+
+export const PAYASSURE_AUTH_REQUEST_TIMEOUT_MS = 15000;
 
 async function requestJson<T>(
   operation: "login" | "refresh",
@@ -24,17 +26,23 @@ async function requestJson<T>(
   try {
     response = await fetchPayassure(url, {
       ...init,
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(PAYASSURE_AUTH_REQUEST_TIMEOUT_MS),
       headers: { "Content-Type": "application/json", ...init.headers },
     });
   } catch (error) {
-    console.error("[PayAssure] Request failed before receiving an HTTP response", {
+    const details = {
       requestId,
       operation,
       method,
       url: safeEndpoint(url),
-      ...transportErrorDetails(error),
-    });
+      timeoutMs: PAYASSURE_AUTH_REQUEST_TIMEOUT_MS,
+      ...safeTransportErrorDetails(error),
+    };
+    if (isTimeoutError(error)) {
+      console.error("[PayAssure] Authentication request timed out", details);
+    } else {
+      console.error("[PayAssure] Authentication request failed before receiving an HTTP response", details);
+    }
     throw error;
   }
   const body = await response.json().catch(() => null) as

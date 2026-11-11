@@ -46,6 +46,42 @@ export function transportErrorDetails(error: unknown): Record<string, unknown> {
   return details;
 }
 
+export function isTimeoutError(error: unknown): boolean {
+  let current = error;
+  let depth = 0;
+  while (current && depth < 4) {
+    if (!(current instanceof Error)) return false;
+    const errorWithCode = current as Error & { code?: string; cause?: unknown };
+    if (
+      current.name === "TimeoutError" ||
+      current.name === "AbortError" ||
+      ["ETIMEDOUT", "ABORT_ERR", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"].includes(errorWithCode.code ?? "")
+    ) {
+      return true;
+    }
+    current = errorWithCode.cause;
+    depth += 1;
+  }
+  return false;
+}
+
+export function safeTransportErrorDetails(error: unknown): Record<string, unknown> {
+  const details: Record<string, unknown> = {};
+  let current = error;
+  let depth = 0;
+  while (current && depth < 4) {
+    if (!(current instanceof Error)) break;
+    const errorWithCode = current as Error & { code?: string; cause?: unknown };
+    details[`error${depth || ""}`] = {
+      name: current.name,
+      ...(errorWithCode.code ? { code: errorWithCode.code } : {}),
+    };
+    current = errorWithCode.cause;
+    depth += 1;
+  }
+  return details;
+}
+
 export function responseMetadata(response: UndiciResponse, body: unknown): Record<string, unknown> {
   const requestId =
     response.headers.get("x-request-id") ?? response.headers.get("request-id");

@@ -44,6 +44,8 @@ Keep `SESSION_SECRET` stable across application instances and restarts if existi
 
 Set `SESSION_DIAGNOSTICS=true` temporarily in the hosting environment to log limited session state for requests to the auth, product, batch, supplier, dashboard, sales, and PayAssure API paths. The middleware runs after Express session loading and before route handlers. It records only the HTTP method, request path, whether Express considers the request secure, and booleans indicating whether a session, session ID, and authenticated `userId` are present. It never logs cookie values, session IDs, secrets, passwords, database credentials, or the complete session object. Disable the flag after troubleshooting by unsetting it or setting it to any value other than `"true"`.
 
+For temporary PayAssure retailer float-balance diagnostics, set `PAYASSURE_FLOAT_DIAGNOSTICS=true`. The balance flow logs authentication start/completion, request start, response receipt, and flow completion, correlated by a generated flow ID. It omits access/refresh tokens, credentials, response values, and request payload values. Authentication and float HTTP calls each have their own 15-second timeout; timeout logs identify which phase timed out. Disable the flag after troubleshooting. Timeout errors are also logged with the phase and safe error metadata.
+
 ## How protected requests are checked
 
 [`requireAuth`](./server/src/auth.ts) is an Express middleware. It checks whether `req.session.userId` is truthy. If it is absent or falsy, the middleware ends the request with `401` and `{"error":"Authentication required"}`; otherwise it calls `next()` and the endpoint handler runs.
