@@ -65,21 +65,60 @@ export function isTimeoutError(error: unknown): boolean {
   return false;
 }
 
-export function safeTransportErrorDetails(error: unknown): Record<string, unknown> {
-  const details: Record<string, unknown> = {};
-  let current = error;
-  let depth = 0;
-  while (current && depth < 4) {
-    if (!(current instanceof Error)) break;
-    const errorWithCode = current as Error & { code?: string; cause?: unknown };
-    details[`error${depth || ""}`] = {
-      name: current.name,
-      ...(errorWithCode.code ? { code: errorWithCode.code } : {}),
-    };
-    current = errorWithCode.cause;
-    depth += 1;
+export function safeTransportErrorDetails(
+  error: unknown,
+  additionalSecrets: string[] = [],
+): Record<string, unknown> {
+  const knownSecrets = [
+    process.env.PAYASSURE_PASSWORD,
+    process.env.PAYASSURE_IDENTIFIER,
+    process.env.SESSION_SECRET,
+    process.env.DATABASE_URL,
+    ...additionalSecrets,
+  ].filter((value): value is string => Boolean(value));
+  const secretsByLength = knownSecrets.sort((left, right) => right.length - left.length);
+
+  function redact(value: string): string {
+    let safeValue = value;
+    for (const secret of secretsByLength) {
+      safeValue = safeValue.split(secret).join("[REDACTED]");
+    }
+    return safeValue
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]")
+      .replace(
+        /(\b(?:authorization|password|access[_-]?token|refresh[_-]?token|api[_-]?key|api[_-]?secret|secret|encryption[_-]?key)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+        "$1[REDACTED]",
+      );
   }
-  return details;
+
+  function summarize(value: unknown, depth: number): unknown {
+    if (depth >= 4 || value === null || value === undefined) return undefined;
+    if (typeof value === "string") return redact(value);
+    if (typeof value !== "object") return undefined;
+
+    const errorValue = value as Error & {
+      code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      cause?: unknown;
+    };
+    const summary: Record<string, unknown> = {};
+    if (typeof errorValue.name === "string") summary.name = redact(errorValue.name);
+    if (typeof errorValue.message === "string") summary.message = redact(errorValue.message);
+    if (typeof errorValue.stack === "string") summary.stack = redact(errorValue.stack);
+    if (typeof errorValue.code === "string" || typeof errorValue.code === "number") {
+      summary.code = errorValue.code;
+    }
+    if (typeof errorValue.status === "number") summary.status = errorValue.status;
+    if (typeof errorValue.statusCode === "number") summary.statusCode = errorValue.statusCode;
+    if (errorValue.cause !== undefined) {
+      const cause = summarize(errorValue.cause, depth + 1);
+      if (cause !== undefined) summary.cause = cause;
+    }
+    return Object.keys(summary).length ? summary : { type: typeof value };
+  }
+
+  return { error: summarize(error, 0) };
 }
 
 export function responseMetadata(response: UndiciResponse, body: unknown): Record<string, unknown> {

@@ -6,7 +6,7 @@ import { currentPayassureSession, refreshPayassureSession } from "./payassure-to
 import type { Response as UndiciResponse } from "undici";
 
 const FLOAT_REQUEST_TIMEOUT_MS = 15000;
-const FLOAT_DIAGNOSTICS_ENABLED = process.env.PAYASSURE_FLOAT_DIAGNOSTICS === "true";
+const FLOAT_DIAGNOSTICS_ENABLED = process.env.PAYASSURE_DEBUG === "true";
 
 export async function requestRetailerFloat(
   operation: "retailer-float" | "retailer-float-balance" | "retailer-float-deposit",
@@ -14,29 +14,85 @@ export async function requestRetailerFloat(
   endpoint: string,
   payload?: Record<string, unknown>,
 ): Promise<unknown> {
-  const config = getConfig();
   const flowId = randomUUID();
-  const endpointUrl = `${config.baseUrl}${endpoint}`;
   const isBalanceCheck = operation === "retailer-float-balance";
+  let config: ReturnType<typeof getConfig> | undefined;
+  let endpointUrl = "";
+  let session!: Awaited<ReturnType<typeof currentPayassureSession>>;
+  let diagnosticSession: Awaited<ReturnType<typeof currentPayassureSession>> | undefined;
 
-  function logFlow(phase: string, details: Record<string, unknown> = {}): void {
+  function logFlow(stage: string, phase: string, details: Record<string, unknown> = {}): void {
     if (isBalanceCheck && FLOAT_DIAGNOSTICS_ENABLED) {
-      console.info("[PayAssure] Retailer float balance flow", {
+      console.info("[PayAssure] Retailer float balance diagnostic", {
         flowId,
+        stage,
         phase,
         ...details,
       });
     }
   }
 
+  function diagnosticSecrets(): string[] {
+    return [
+      config?.password,
+      diagnosticSession?.accessToken,
+      diagnosticSession?.refreshToken,
+    ].filter((value): value is string => Boolean(value));
+  }
+
+  async function traceStage<T>(
+    stage: string,
+    phase: string,
+    action: () => T | Promise<T>,
+  ): Promise<T> {
+    const startedAt = Date.now();
+    logFlow(stage, phase, { event: "started" });
+    try {
+      const result = await action();
+      logFlow(stage, phase, { event: "completed", durationMs: Date.now() - startedAt });
+      return result;
+    } catch (error) {
+      if (isBalanceCheck && FLOAT_DIAGNOSTICS_ENABLED) {
+        console.error("[PayAssure] Retailer float diagnostic stage failed", {
+          flowId,
+          stage,
+          phase,
+          durationMs: Date.now() - startedAt,
+          timeout: isTimeoutError(error),
+          ...safeTransportErrorDetails(error, diagnosticSecrets()),
+        });
+      }
+      throw error;
+    }
+  }
+
+  const resolvedConfig = await traceStage("getConfig", "initial", () => getConfig());
+  config = resolvedConfig;
+  endpointUrl = await traceStage(
+    "construct_endpoint_url",
+    "initial",
+    () => `${resolvedConfig.baseUrl}${endpoint}`,
+  );
+  logFlow("construct_endpoint_url", "initial", {
+    event: "value_ready",
+    url: safeEndpoint(endpointUrl),
+  });
+
   async function authenticate(phase: string, refreshFirst = false) {
     const startedAt = Date.now();
-    logFlow("authentication_started", { phase });
+    logFlow("authentication", phase, { event: "started" });
     try {
-      if (refreshFirst) await refreshPayassureSession();
-      const authenticatedSession = await currentPayassureSession();
-      logFlow("authentication_completed", {
+      if (refreshFirst) {
+        await traceStage("refreshPayassureSession", phase, () => refreshPayassureSession());
+      }
+      const authenticatedSession = await traceStage(
+        "currentPayassureSession",
         phase,
+        () => currentPayassureSession(),
+      );
+      diagnosticSession = authenticatedSession;
+      logFlow("authentication", phase, {
+        event: "completed",
         durationMs: Date.now() - startedAt,
         authenticated: true,
       });
@@ -44,59 +100,67 @@ export async function requestRetailerFloat(
     } catch (error) {
       const details = {
         flowId,
+        stage: "authentication",
         phase,
         durationMs: Date.now() - startedAt,
-        ...safeTransportErrorDetails(error),
+        timeout: isTimeoutError(error),
+        ...safeTransportErrorDetails(error, diagnosticSecrets()),
       };
-      if (isTimeoutError(error)) {
-        console.error("[PayAssure] Retailer float authentication timed out", details);
-      } else {
-        logFlow("authentication_failed", details);
+      if (isBalanceCheck && FLOAT_DIAGNOSTICS_ENABLED) {
+        console.error(
+          isTimeoutError(error)
+            ? "[PayAssure] Retailer float authentication timed out"
+            : "[PayAssure] Retailer float authentication failed",
+          details,
+        );
       }
       throw error;
     }
   }
 
-  let session = await authenticate("initial");
+  session = await authenticate("initial");
 
   async function fetchFloat(phase: string): Promise<UndiciResponse> {
-    const requestId = randomUUID();
-    const startedAt = Date.now();
-    logFlow("float_request_started", {
-      phase,
-      requestId,
-      method,
-      url: safeEndpoint(endpointUrl),
-    });
-    console.info("[PayAssure] Sending request", {
-      requestId,
-      ...(isBalanceCheck ? { flowId, phase } : {}),
-      operation,
-      method,
-      url: safeEndpoint(endpointUrl),
-      authorization: "******",
-      ...(payload
-        ? {
-            payload: {
-              ...payload,
-              ...(typeof payload.payerPhoneNumber === "string"
-                ? { payerPhoneNumber: "[REDACTED]" }
-                : {}),
-            },
-          }
-        : {}),
-    });
-    try {
-      const response = await fetchPayassure(endpointUrl, {
+    return traceStage("fetchFloat", phase, async () => {
+      const requestId = randomUUID();
+      const startedAt = Date.now();
+      logFlow("fetchFloat", phase, {
+        event: "request_started",
+        requestId,
         method,
-        headers: {
+        url: safeEndpoint(endpointUrl),
+        timeoutMs: FLOAT_REQUEST_TIMEOUT_MS,
+      });
+      console.info("[PayAssure] Sending request", {
+        requestId,
+        ...(isBalanceCheck ? { flowId, phase } : {}),
+        operation,
+        method,
+        url: safeEndpoint(endpointUrl),
+        authorization: "[REDACTED]",
+        ...(payload
+          ? {
+              payload: {
+                ...payload,
+                ...(typeof payload.payerPhoneNumber === "string"
+                  ? { payerPhoneNumber: "[REDACTED]" }
+                  : {}),
+              },
+            }
+          : {}),
+      });
+      const response = await traceStage("fetchPayassure", phase, () =>
+        fetchPayassure(endpointUrl, {
+          method,
+          headers: {
           Authorization: `Bearer ${session.accessToken}`,
           Accept: "application/json",
           ...(payload ? { "Content-Type": "application/json" } : {}),
         },
-        ...(payload ? { body: JSON.stringify(payload) } : {}),
-        signal: AbortSignal.timeout(FLOAT_REQUEST_TIMEOUT_MS),
-      });
+          ...(payload ? { body: JSON.stringify(payload) } : {}),
+          signal: AbortSignal.timeout(FLOAT_REQUEST_TIMEOUT_MS),
+        }),
+      );
       const responseDetails = {
         requestId,
         ...(isBalanceCheck ? { flowId, phase } : {}),
@@ -104,82 +168,64 @@ export async function requestRetailerFloat(
         durationMs: Date.now() - startedAt,
         ...responseMetadata(response, null),
       };
-      console.info("[PayAssure] Received response", {
-        ...responseDetails,
-      });
-      logFlow("float_response_received", {
-        phase,
+      console.info("[PayAssure] Received response", responseDetails);
+      logFlow("fetchFloat", phase, {
+        event: "response_received",
         durationMs: Date.now() - startedAt,
         status: response.status,
         statusText: response.statusText,
         contentType: response.headers.get("content-type"),
       });
       return response;
-    } catch (error) {
-      const errorDetails = {
-        requestId,
-        ...(isBalanceCheck ? { flowId, phase } : {}),
-        operation,
-        method,
-        url: safeEndpoint(endpointUrl),
-        timeoutMs: FLOAT_REQUEST_TIMEOUT_MS,
-        durationMs: Date.now() - startedAt,
-        ...safeTransportErrorDetails(error),
-      };
-      if (isTimeoutError(error)) {
-        console.error(
-          isBalanceCheck
-            ? "[PayAssure] Retailer float balance request timed out"
-            : "[PayAssure] Retailer float request timed out",
-          errorDetails,
-        );
-      } else {
-        console.error("[PayAssure] Request failed before receiving an HTTP response", errorDetails);
-      }
-      logFlow("float_request_failed", {
-        phase,
-        durationMs: Date.now() - startedAt,
-        timedOut: isTimeoutError(error),
-        ...safeTransportErrorDetails(error),
-      });
-      throw error;
-    }
-  }
-
-  let response = await fetchFloat("initial");
-  if (response.status === 401) {
-    logFlow("reauthentication_after_401_started", { status: response.status });
-    session = await authenticate("after_401", true);
-    logFlow("reauthentication_after_401_completed", { authenticated: true });
-    response = await fetchFloat("retry_after_401");
-  }
-
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = (body as { message?: string } | null)?.message;
-    console.error("[PayAssure] Retailer float request returned an error", {
-      ...(isBalanceCheck ? { flowId } : {}),
-      operation,
-      status: response.status,
-      responseFormat: Array.isArray(body) ? "array" : typeof body,
-      responseKeys:
-        body && typeof body === "object" && !Array.isArray(body)
-          ? Object.keys(body)
-          : [],
     });
-    throw new PayassureHttpError(
-      response.status,
-      message ?? `PayAssure retailer float request failed (${response.status})`,
-    );
   }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new Error("PayAssure retailer float request returned an invalid response");
+
+  let responsePhase = "initial";
+  let response = await fetchFloat(responsePhase);
+  if (response.status === 401) {
+    logFlow("reauthentication", "after_401", {
+      event: "started",
+      status: response.status,
+    });
+    session = await authenticate("after_401", true);
+    logFlow("reauthentication", "after_401", {
+      event: "completed",
+      authenticated: true,
+    });
+    responsePhase = "retry_after_401";
+    response = await fetchFloat(responsePhase);
   }
+
+  const body = await traceStage("parse_response_body", responsePhase, () => response.json())
+    .catch(() => null);
+  const validatedBody = await traceStage("validate_response", responsePhase, () => {
+    if (!response.ok) {
+      const message = (body as { message?: string } | null)?.message;
+      console.error("[PayAssure] Retailer float request returned an error", {
+        ...(isBalanceCheck ? { flowId } : {}),
+        operation,
+        status: response.status,
+        responseFormat: Array.isArray(body) ? "array" : typeof body,
+        responseKeys:
+          body && typeof body === "object" && !Array.isArray(body)
+            ? Object.keys(body)
+            : [],
+      });
+      throw new PayassureHttpError(
+        response.status,
+        message ?? `PayAssure retailer float request failed (${response.status})`,
+      );
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error("PayAssure retailer float request returned an invalid response");
+    }
+    return body;
+  });
   console.info("[PayAssure] Retailer float data received", {
     ...(isBalanceCheck ? { flowId } : {}),
     operation,
-    responseKeys: Object.keys(body),
+    responseKeys: Object.keys(validatedBody),
   });
-  logFlow("flow_completed", { status: response.status });
-  return body;
+  logFlow("flow", "completed", { status: response.status });
+  return validatedBody;
 }

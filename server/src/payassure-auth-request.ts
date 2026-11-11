@@ -12,6 +12,7 @@ async function requestJson<T>(
   url: string,
   init: UndiciRequestInit,
   safePayload: Record<string, unknown>,
+  sensitiveValues: string[] = [],
 ): Promise<T> {
   const requestId = randomUUID();
   const method = init.method ?? "GET";
@@ -36,7 +37,7 @@ async function requestJson<T>(
       method,
       url: safeEndpoint(url),
       timeoutMs: PAYASSURE_AUTH_REQUEST_TIMEOUT_MS,
-      ...safeTransportErrorDetails(error),
+      ...safeTransportErrorDetails(error, sensitiveValues),
     };
     if (isTimeoutError(error)) {
       console.error("[PayAssure] Authentication request timed out", details);
@@ -72,7 +73,7 @@ export async function login(config: PayassureConfig): Promise<PayassureTokens> {
   }, {
     identifier: maskIdentifier(config.identifier),
     password: "[REDACTED]",
-  });
+  }, [config.password]);
   if (!body.accessToken || !body.refreshToken || !body.user?.id) {
     throw new Error("PayAssure login did not return tokens and a user ID");
   }
@@ -91,7 +92,7 @@ export async function refresh(
   }>("refresh", `${config.baseUrl}/auth/refresh`, {
     method: "POST",
     body: JSON.stringify({ refreshToken }),
-  }, { refreshToken: "[REDACTED]" });
+  }, { refreshToken: "[REDACTED]" }, [refreshToken]);
   if (!body.accessToken || !body.refreshToken) {
     throw new Error("PayAssure refresh did not return both tokens");
   }
