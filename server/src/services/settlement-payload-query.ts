@@ -3,9 +3,8 @@ import { pool } from "../db";
 
 export interface SettlementPayloadLine {
   totalCents: string;
-  supplierMerchantId: string;
-  supplierName: string;
-  supplierEnrolled: boolean;
+  supplierMerchantId: string | null;
+  supplierName: string | null;
   itemReference: string;
   supplierAmountCents: string | null;
   retailerAmountCents: string | null;
@@ -13,9 +12,10 @@ export interface SettlementPayloadLine {
 }
 
 const query = `SELECT s.total_cents::text AS "totalCents",
-          COALESCE(supplier.payassure_merchant_id, '') AS "supplierMerchantId",
+          CASE WHEN supplier.payassure_enrolled
+            THEN supplier.payassure_merchant_id ELSE NULL
+          END AS "supplierMerchantId",
           supplier.name AS "supplierName",
-          supplier.payassure_enrolled AS "supplierEnrolled",
           COALESCE(NULLIF(p.stock_code, ''), NULLIF(p.barcode, ''),
                    'POS-PRODUCT-' || i.product_id::text) AS "itemReference",
           CASE WHEN BOOL_OR(COALESCE(
@@ -36,10 +36,11 @@ const query = `SELECT s.total_cents::text AS "totalCents",
    FROM sale_items i
    JOIN sales s ON s.id = i.sale_id
    JOIN products p ON p.id = i.product_id
-   JOIN suppliers supplier ON supplier.id = COALESCE(i.supplier_id, p.supplier_id)
+   LEFT JOIN suppliers supplier ON supplier.id = COALESCE(i.supplier_id, p.supplier_id)
    WHERE i.sale_id = $1
    GROUP BY s.total_cents, i.product_id, p.stock_code, p.barcode,
-            supplier.payassure_merchant_id, supplier.name, supplier.payassure_enrolled
+            supplier.payassure_merchant_id, supplier.payassure_enrolled,
+            supplier.name
    ORDER BY i.product_id`;
 
 export async function getSettlementPayloadLines(

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "../lib/api";
 import type { PayassureDirectorySupplier, Supplier } from "../types";
 
@@ -15,6 +15,9 @@ export function useSupplierManagement(
   const [selectedSupplier, setSelectedSupplier] = useState<PayassureDirectorySupplier | null>(null);
   const [selectionError, setSelectionError] = useState("");
   const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (!payassureEnrolled) {
@@ -52,15 +55,30 @@ export function useSupplierManagement(
   }, [search, suppliers]);
 
   async function submitSupplier(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (savingRef.current) return;
     if (payassureEnrolled && !selectedSupplier) {
-      event.preventDefault();
       setSelectionError("Choose a supplier from the PayAssure search results.");
       return;
     }
+    const name = (selectedSupplier?.name ?? supplierName).trim();
+    if (suppliers.some((supplier) =>
+      supplier.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      setSaveError("A supplier with this name is already saved.");
+      return;
+    }
     setSelectionError("");
-    if (await onSaveSupplier(event)) {
-      setSupplierName("");
-      setSelectedSupplier(null);
+    setSaveError("");
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      if (await onSaveSupplier(event)) {
+        setSupplierName("");
+        setSelectedSupplier(null);
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }
 
@@ -74,7 +92,7 @@ export function useSupplierManagement(
     suppliers, filteredSuppliers, search, setSearch, payassureEnrolled, setPayassureEnrolled,
     directorySuppliers, directoryLoading, directoryError, setDirectoryReload, supplierName,
     setSupplierName, selectedSupplier, setSelectedSupplier, selectionError, setSelectionError,
-    matchingDirectorySuppliers, submitSupplier, chooseSupplier,
+    matchingDirectorySuppliers, submitSupplier, chooseSupplier, saving, saveError,
   };
 }
 

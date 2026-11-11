@@ -1,6 +1,5 @@
 import type { Request, Response } from "express";
 import { checkoutSchema } from "../validation/checkout";
-import { getRegisteredPayassureWebhookUrl } from "../payassure";
 import { normalizeMpesaPhone } from "./checkout-helpers";
 import type { CheckoutInput } from "./checkout-models";
 
@@ -20,13 +19,6 @@ export function parseCheckoutRequest(
       }
     }
     res.status(400).json({ error: "Provide one or more valid checkout items" });
-    return null;
-  }
-  if (!getRegisteredPayassureWebhookUrl()) {
-    res.status(503).json({
-      code: "PAYASSURE_WEBHOOK_NOT_READY",
-      error: "The PayAssure webhook receiver has not been configured for this server session. Sign out and sign in again before checkout.",
-    });
     return null;
   }
   let mpesaPhone: string | null = null;

@@ -11,12 +11,14 @@ export async function buildStoredSettlementPayload(
   mpesaPhone: string | null,
 ): Promise<StoredSettlementPayload> {
   const lines = await client.query<{
-    supplierMerchantId: string;
+    supplierMerchantId: string | null;
     itemReference: string;
     supplierAmountCents: string | null;
     retailerAmountCents: string | null;
   }>(
-    `SELECT COALESCE(s.payassure_merchant_id, '') AS "supplierMerchantId",
+    `SELECT CASE WHEN s.payassure_enrolled
+              THEN s.payassure_merchant_id ELSE NULL
+            END AS "supplierMerchantId",
             COALESCE(NULLIF(p.stock_code, ''), NULLIF(p.barcode, ''),
                      'POS-PRODUCT-' || i.product_id::text) AS "itemReference",
             CASE WHEN BOOL_OR(i.buying_unit_price_cents IS NULL)
@@ -29,9 +31,10 @@ export async function buildStoredSettlementPayload(
               )::text END AS "retailerAmountCents"
      FROM sale_items i
      JOIN products p ON p.id = i.product_id
-     JOIN suppliers s ON s.id = COALESCE(i.supplier_id, p.supplier_id)
+     LEFT JOIN suppliers s ON s.id = COALESCE(i.supplier_id, p.supplier_id)
      WHERE i.sale_id = $1
-     GROUP BY i.product_id, p.stock_code, p.barcode, s.payassure_merchant_id
+     GROUP BY i.product_id, p.stock_code, p.barcode,
+              s.payassure_enrolled, s.payassure_merchant_id
      ORDER BY i.product_id`,
     [saleId],
   );

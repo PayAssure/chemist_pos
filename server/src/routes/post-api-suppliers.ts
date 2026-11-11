@@ -13,8 +13,24 @@ router.post("/api/suppliers", requireAuth, async (req, res, next) => {
     res.status(400).json({ error: "Provide a supplier name and valid PayAssure enrollment details" });
     return;
   }
+  let client: PoolClient | undefined;
   try {
-    const result = await pool.query(
+    client = await pool.connect();
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(745219631::BIGINT)");
+    const duplicate = await client.query(
+      `SELECT 1 FROM suppliers WHERE lower(btrim(name)) = lower(btrim($1)) LIMIT 1`,
+      [parsed.data.name],
+    );
+    if (duplicate.rowCount) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "A supplier with this name is already saved" });
+      return;
+    }
+    const merchantId = parsed.data.payassureEnrolled
+      ? parsed.data.merchantId
+      : await nextLocalSupplierMerchantId(client);
+    const result = await client.query(
       `INSERT INTO suppliers
          (name, payassure_merchant_id, payassure_enrolled, contact_name, phone, email, address)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -23,7 +39,7 @@ router.post("/api/suppliers", requireAuth, async (req, res, next) => {
                  contact_name AS "contactName", phone, email, address`,
       [
         parsed.data.name,
-        parsed.data.payassureEnrolled ? parsed.data.merchantId : null,
+        merchantId,
         parsed.data.payassureEnrolled,
         parsed.data.contactName,
         parsed.data.phone,
@@ -31,10 +47,29 @@ router.post("/api/suppliers", requireAuth, async (req, res, next) => {
         parsed.data.address,
       ],
     );
+    await client.query("COMMIT");
     res.status(201).json(result.rows[0]);
   } catch (error) {
+    if (client) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        next(rollbackError);
+        return;
+      }
+    }
     next(error);
+  } finally {
+    client?.release();
   }
 });
+
+async function nextLocalSupplierMerchantId(client: PoolClient) {
+  const result = await client.query<{ nextId: string }>(
+    `SELECT (COALESCE(MAX(substring(payassure_merchant_id FROM '^pos_supplier_([0-9]+)$')::BIGINT), 0) + 1)::TEXT AS "nextId"
+     FROM suppliers WHERE payassure_merchant_id ~ '^pos_supplier_[0-9]+$'`,
+  );
+  return `pos_supplier_${result.rows[0].nextId.padStart(3, "0")}`;
+}
 
 export default router;

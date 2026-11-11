@@ -22,13 +22,11 @@ export async function prepareSettlementPayload(
   }
   const items = lines.map((line) => {
     if (line.missingBuyingPrice || line.supplierAmountCents === null || line.retailerAmountCents === null) {
+      const productSupplier = line.supplierName
+        ? `products supplied by ${line.supplierName}`
+        : "this product";
       throw new Error(
-        `Cannot initiate settlement: set a buying price for products supplied by ${line.supplierName}, then retry`,
-      );
-    }
-    if (!line.supplierEnrolled || !line.supplierMerchantId) {
-      throw new Error(
-        `Cannot initiate settlement: supplier ${line.supplierName} is not enrolled with a PayAssure merchant ID`,
+        `Cannot initiate settlement: set a buying price for ${productSupplier}, then retry`,
       );
     }
     const supplierAmountCents = Number(line.supplierAmountCents);

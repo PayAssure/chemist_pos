@@ -24,7 +24,7 @@ export type PayassureSettlementPayload = {
     >;
   };
   items: Array<{
-    supplierMerchantId: string;
+    supplierMerchantId: string | null;
     itemReference: string;
     supplierAmount: number;
     retailerAmount: number;

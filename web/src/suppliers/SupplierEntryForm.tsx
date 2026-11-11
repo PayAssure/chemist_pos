@@ -17,7 +17,13 @@ function SupplierEntryForm({ controller }: { controller: SupplierController }) {
       {controller.payassureEnrolled
         ? <SupplierDirectoryPanel controller={controller} />
         : <SupplierContactFields />}
-      <button className="button button-primary" type="submit">Save supplier</button>
+      {controller.saveError && <p className="form-error" role="alert">{controller.saveError}</p>}
+      <button className="button button-primary" type="submit" disabled={controller.saving}
+        aria-busy={controller.saving}>
+        {controller.saving
+          ? <><span className="checkout-spinner" aria-hidden="true" />Saving supplier…</>
+          : "Save supplier"}
+      </button>
     </form>
   );
 }

@@ -16,7 +16,7 @@ export async function insertSaleItems(
             supplier_id, supplier_name)
          SELECT $1, $2, $3, $4, $5, $6, $7, $8, p.buying_price_cents,
                 p.supplier_id, s.name
-         FROM products p JOIN suppliers s ON s.id = p.supplier_id
+         FROM products p LEFT JOIN suppliers s ON s.id = p.supplier_id
          WHERE p.id = $2`,
         [
           saleId,
