@@ -11,6 +11,10 @@ import {
 } from "./payassure-settlement-request";
 import { authenticateRetailer } from "./payassure-settlement-auth";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export async function initiatePayassureSettlement(
   payload: PayassureSettlementPayload,
   onPayloadPrepared: (preparedPayload: PayassureSettlementPayload) => Promise<void>,
@@ -56,8 +60,13 @@ export async function initiatePayassureSettlement(
         sessionToken,
       ],
     );
+    const settlement = isRecord(initiation.body.settlement) ? initiation.body.settlement : {};
     const providerSettlementId =
-      typeof initiation.body.settlementId === "string" ? initiation.body.settlementId : null;
+      typeof initiation.body.settlementId === "string"
+        ? initiation.body.settlementId
+        : typeof settlement.settlementId === "string"
+          ? settlement.settlementId
+          : null;
     console.info("[PayAssure] Settlement initiated", {
       operation: "initiate-settlement",
       merchantTransactionReference: preparedPayload.merchantTransactionReference,

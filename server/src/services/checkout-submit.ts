@@ -5,6 +5,7 @@ import {
   initiatePayassureSettlement,
 } from "../payassure";
 import type { CheckoutInput, CheckoutState, StagedCheckout } from "./checkout-models";
+import { processPendingWebhookEvents } from "./webhook-transaction";
 
 export async function submitStagedCheckout(
   staged: StagedCheckout,
@@ -31,6 +32,19 @@ export async function submitStagedCheckout(
      WHERE id = $1`,
     [staged.settlementId, initiation.providerRequestId, initiation.providerSettlementId],
   );
+  if (initiation.providerSettlementId) {
+    try {
+      await processPendingWebhookEvents(initiation.providerSettlementId);
+    } catch (error) {
+      console.error("[PayAssure] Could not process webhooks deferred during settlement initiation", {
+        saleId: staged.saleId,
+        merchantTransactionReference: state.reference,
+        providerSettlementId: initiation.providerSettlementId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        message: error instanceof Error ? error.message : "Unknown deferred webhook error",
+      });
+    }
+  }
   const status = await pool.query(
     `SELECT sale.status, settlement.status AS "settlementStatus",
             settlement.collection_status AS "collectionStatus",
@@ -45,6 +59,9 @@ export async function submitStagedCheckout(
     console.info("[PayAssure] Checkout awaiting collection webhook", {
       saleId: staged.saleId,
       merchantTransactionReference: state.reference,
+      expectedWebhookEventType: "payment.collection.succeeded",
+      providerRequestId: initiation.providerRequestId,
+      providerSettlementId: initiation.providerSettlementId,
       endpoint: getRegisteredPayassureWebhookUrl() ?? "not configured",
       settlementStatus: checkoutStatus.settlementStatus,
       collectionStatus: checkoutStatus.collectionStatus,

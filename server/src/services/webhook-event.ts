@@ -7,31 +7,83 @@ import { confirmPayassureCollectionInventory } from "./webhook-event-stock";
 export async function applyPayassureWebhookEvent(
   client: PoolClient,
   event: PayassureWebhookEvent,
-): Promise<void> {
-  const result = await client.query<{
+): Promise<number> {
+  type CheckoutSettlement = {
     id: number;
     status: "completed" | "pending" | "failed";
     totalCents: number;
     collectionStatus: "pending" | "succeeded" | "failed";
     settlementStatus: string;
     lastEventAt: string | null;
-  }>(
+    providerSettlementId: string | null;
+    merchantTransactionReference: string;
+  };
+  const result = await client.query<CheckoutSettlement>(
     `SELECT sale.id, sale.status, sale.total_cents AS "totalCents",
             settlement.collection_status AS "collectionStatus",
             settlement.status AS "settlementStatus",
-            settlement.last_event_at AS "lastEventAt"
+            settlement.last_event_at AS "lastEventAt",
+            settlement.provider_settlement_id AS "providerSettlementId",
+            settlement.merchant_transaction_reference AS "merchantTransactionReference"
      FROM payassure_settlements settlement
      JOIN sales sale ON sale.id = settlement.sale_id
-     WHERE settlement.provider_settlement_id = $2
-        OR (
-          settlement.provider_settlement_id IS NULL
-          AND settlement.merchant_transaction_reference = $1
-        )
+     WHERE settlement.merchant_transaction_reference = $1
      FOR UPDATE OF settlement, sale`,
-    [event.merchantTransactionReference, event.settlementId],
+    [event.merchantTransactionReference],
   );
-  const sale = result.rows[0];
-  if (!sale) throw Object.assign(new Error("No matching checkout for this PayAssure event"), { status: 404 });
+  let sale = result.rows[0];
+  if (!sale) {
+    const settlementMatch = await client.query<CheckoutSettlement>(
+      `SELECT sale.id, sale.status, sale.total_cents AS "totalCents",
+              settlement.collection_status AS "collectionStatus",
+              settlement.status AS "settlementStatus",
+              settlement.last_event_at AS "lastEventAt",
+              settlement.provider_settlement_id AS "providerSettlementId",
+              settlement.merchant_transaction_reference AS "merchantTransactionReference"
+       FROM payassure_settlements settlement
+       JOIN sales sale ON sale.id = settlement.sale_id
+       WHERE settlement.provider_settlement_id = $1
+       FOR UPDATE OF settlement, sale`,
+      [event.settlementId],
+    );
+    sale = settlementMatch.rows[0];
+    if (sale) {
+      console.warn("[PayAssure] Webhook merchant transaction reference did not match; checkout found by provider settlement ID", {
+        eventMerchantTransactionReference: event.merchantTransactionReference,
+        storedMerchantTransactionReference: sale.merchantTransactionReference,
+        eventSettlementId: event.settlementId,
+      });
+    }
+  }
+  if (!sale) {
+    throw Object.assign(
+      new Error("No checkout matches the PayAssure merchant transaction reference"),
+      { status: 404 },
+    );
+  }
+
+  const providerSettlementConflict = await client.query(
+    `SELECT 1
+     FROM payassure_settlements
+     WHERE provider_settlement_id = $1
+       AND sale_id <> $2
+     LIMIT 1`,
+    [event.settlementId, sale.id],
+  );
+  if (providerSettlementConflict.rowCount) {
+    throw Object.assign(new Error("PayAssure settlement ID is already mapped to a different checkout"), {
+      status: 409,
+    });
+  }
+  if (sale.providerSettlementId && sale.providerSettlementId !== event.settlementId) {
+    console.warn("[PayAssure] Provider settlement ID differs; matching checkout by merchant transaction reference", {
+      settlementReference: event.settlementReference,
+      merchantTransactionReference: event.merchantTransactionReference,
+      storedProviderSettlementId: sale.providerSettlementId,
+      eventProviderSettlementId: event.settlementId,
+    });
+  }
+
   if (
     event.currency !== "KES" ||
     Math.round(event.amount * 100) !== Number(sale.totalCents)
@@ -65,21 +117,22 @@ export async function applyPayassureWebhookEvent(
        WHERE sale_id = $1`,
       [sale.id, event.settlementId, event.type, JSON.stringify(event.payload), event.createdAt],
     );
-    return;
+    return sale.id;
   }
 
   if (event.type === "payment.collection.failed") {
     if (sale.collectionStatus !== "succeeded") {
       await applyPayassureCollectionFailure(client, sale.id, event);
     }
-    return;
+    return sale.id;
   }
 
   if (
     sale.collectionStatus === "failed" ||
     sale.settlementStatus === "completed" ||
     isStaleSettlementEvent
-  ) return;
+  ) return sale.id;
 
   await applyPayassureSettlementEvent(client, sale.id, event);
+  return sale.id;
 }

@@ -49,10 +49,21 @@ export function parsePayassureWebhookEvent(
   const settlementId = typeof data.settlement.id === "string" ? data.settlement.id : "";
   const settlementReference =
     typeof data.settlement.reference === "string" ? data.settlement.reference : "";
+  const camelCaseReference = data.settlement.merchantTransactionReference;
+  const snakeCaseReference = data.settlement.merchant_transaction_reference;
+  if (
+    typeof camelCaseReference === "string" &&
+    typeof snakeCaseReference === "string" &&
+    camelCaseReference.trim() !== snakeCaseReference.trim()
+  ) {
+    throw new Error("Webhook merchant transaction reference fields do not match");
+  }
   const merchantTransactionReference =
-    typeof data.settlement.merchant_transaction_reference === "string"
-      ? data.settlement.merchant_transaction_reference
-      : "";
+    typeof camelCaseReference === "string"
+      ? camelCaseReference.trim()
+      : typeof snakeCaseReference === "string"
+        ? snakeCaseReference.trim()
+        : "";
   const amount = data.settlement.amount;
   const currency = typeof data.settlement.currency === "string" ? data.settlement.currency : "";
 
