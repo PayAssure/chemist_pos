@@ -7,7 +7,7 @@ const { requireAuth, pool, z, bcrypt, createHash, randomUUID, rateLimit, checkPa
 
 const router = Router();
 
-router.get("/api/health", async (_req, res) => {
+router.get(["/health", "/api/health"], async (_req, res) => {
   try {
     await pool.query("SELECT 1");
     res.json({ status: "ok", database: "connected" });

@@ -29,13 +29,6 @@ CREATE TABLE IF NOT EXISTS suppliers (
   phone TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL DEFAULT '',
   address TEXT NOT NULL DEFAULT '',
-  CONSTRAINT suppliers_payassure_registration_check CHECK (
-    (payassure_enrolled AND payassure_merchant_id IS NOT NULL
-      AND length(btrim(payassure_merchant_id)) > 0)
-    OR (NOT payassure_enrolled AND (
-      payassure_merchant_id IS NULL OR payassure_merchant_id ~ '^pos_supplier_[0-9]{3,}$'
-    ))
-  ),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -47,14 +40,6 @@ ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';
 ALTER TABLE suppliers DROP CONSTRAINT IF EXISTS suppliers_payassure_merchant_id_check;
 ALTER TABLE suppliers DROP CONSTRAINT IF EXISTS suppliers_payassure_registration_check;
-
-ALTER TABLE suppliers ADD CONSTRAINT suppliers_payassure_registration_check CHECK (
-  (payassure_enrolled AND payassure_merchant_id IS NOT NULL
-    AND length(btrim(payassure_merchant_id)) > 0)
-  OR (NOT payassure_enrolled AND (
-    payassure_merchant_id IS NULL OR payassure_merchant_id ~ '^pos_supplier_[0-9]{3,}$'
-  ))
-);
 
 CREATE TABLE IF NOT EXISTS products (
   id SERIAL PRIMARY KEY,
