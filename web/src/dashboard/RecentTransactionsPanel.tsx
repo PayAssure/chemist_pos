@@ -34,7 +34,10 @@ function RecentTransactionsPanel({
 
 function TransactionRow({ transaction }: { transaction: Transaction }) {
   const statusLabel = transaction.status === "completed" ? "Sale completed"
-    : transaction.status === "pending" ? "Awaiting PayAssure collection" : "Checkout failed";
+    : transaction.status === "pending"
+      ? transaction.collectionStatus === "succeeded"
+        ? "Awaiting PayAssure settlement" : "Awaiting PayAssure collection"
+      : "Checkout failed";
   const methodLabel = transaction.paymentMethod === "cash" ? "Cash"
     : transaction.paymentMethod === "credit" ? "Credit" : "M-Pesa";
   return (
@@ -45,7 +48,9 @@ function TransactionRow({ transaction }: { transaction: Transaction }) {
         {transaction.payerName && (
           <small>Payer: {transaction.payerName} · {transaction.payerPhone}</small>
         )}
-        {transaction.failureReason && <small className="expiry-warning">{transaction.failureReason}</small>}
+        {transaction.failureReason && transaction.failureReason !== transaction.settlementError && (
+          <small className="expiry-warning">{transaction.failureReason}</small>
+        )}
         {transaction.settlementStatus && <SettlementDetails transaction={transaction} />}
       </div>
       <div className="dashboard-transaction-result">
@@ -61,7 +66,8 @@ function TransactionRow({ transaction }: { transaction: Transaction }) {
 function SettlementDetails({ transaction }: { transaction: Transaction }) {
   return (
     <>
-      <small className={transaction.settlementStatus === "failed" ? "expiry-warning" : ""}>
+      <small className={transaction.settlementStatus === "failed"
+        || transaction.settlementStatus === "partially_failed" ? "expiry-warning" : ""}>
         PayAssure settlement: {transaction.settlementStatus}
         {transaction.settlementAttemptCount !== null
           ? ` · attempts ${transaction.settlementAttemptCount}` : ""}

@@ -47,13 +47,35 @@ export async function confirmPayassureCollectionInventory(
             COALESCE((
               SELECT SUM(other_item.quantity)
               FROM sale_items other_item JOIN sales other_sale ON other_sale.id = other_item.sale_id
-              WHERE other_sale.status = 'pending' AND other_sale.id <> $1
+              WHERE (
+                other_sale.status = 'pending'
+                OR (
+                  other_sale.status = 'failed'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM payassure_settlements other_settlement
+                    WHERE other_settlement.sale_id = other_sale.id
+                      AND other_settlement.collection_status = 'pending'
+                  )
+                )
+              ) AND other_sale.id <> $1
                 AND other_item.product_id = item.product_id
             ), 0)::text AS "pendingProduct",
             COALESCE((
               SELECT SUM(other_item.quantity)
               FROM sale_items other_item JOIN sales other_sale ON other_sale.id = other_item.sale_id
-              WHERE other_sale.status = 'pending' AND other_sale.id <> $1
+              WHERE (
+                other_sale.status = 'pending'
+                OR (
+                  other_sale.status = 'failed'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM payassure_settlements other_settlement
+                    WHERE other_settlement.sale_id = other_sale.id
+                      AND other_settlement.collection_status = 'pending'
+                  )
+                )
+              ) AND other_sale.id <> $1
                 AND other_item.batch_id = item.batch_id
             ), 0)::text AS "pendingBatch"
      FROM sale_items item
@@ -91,8 +113,24 @@ export async function confirmPayassureCollectionInventory(
       [productId, quantity],
     );
   }
+}
+
+export async function completePayassureSaleAfterSettlement(
+  client: PoolClient,
+  saleId: number,
+): Promise<void> {
   await client.query(
-    "UPDATE sales SET status = 'completed' WHERE id = $1 AND status IN ('pending', 'failed')",
+    `UPDATE sales sale
+     SET status = 'completed'
+     WHERE sale.id = $1
+       AND sale.status IN ('pending', 'failed')
+       AND EXISTS (
+         SELECT 1
+         FROM payassure_settlements settlement
+         WHERE settlement.sale_id = sale.id
+           AND settlement.collection_status = 'succeeded'
+           AND settlement.status = 'completed'
+       )`,
     [saleId],
   );
 }

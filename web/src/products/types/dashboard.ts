@@ -28,6 +28,7 @@ export type DashboardTransaction = {
   failureReason: string | null;
   payerName: string | null;
   payerPhone: string | null;
+  collectionStatus: "pending" | "succeeded" | "failed" | null;
   settlementId: number | null;
   settlementStatus:
     | "queued" | "processing" | "accepted" | "failed" | "retrying"

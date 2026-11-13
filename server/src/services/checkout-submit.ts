@@ -32,19 +32,6 @@ export async function submitStagedCheckout(
      WHERE id = $1`,
     [staged.settlementId, initiation.providerRequestId, initiation.providerSettlementId],
   );
-  if (initiation.providerSettlementId) {
-    try {
-      await processPendingWebhookEvents(initiation.providerSettlementId);
-    } catch (error) {
-      console.error("[PayAssure] Could not process webhooks deferred during settlement initiation", {
-        saleId: staged.saleId,
-        merchantTransactionReference: state.reference,
-        providerSettlementId: initiation.providerSettlementId,
-        errorName: error instanceof Error ? error.name : "UnknownError",
-        message: error instanceof Error ? error.message : "Unknown deferred webhook error",
-      });
-    }
-  }
   const status = await pool.query(
     `SELECT sale.status, settlement.status AS "settlementStatus",
             settlement.collection_status AS "collectionStatus",
@@ -56,10 +43,9 @@ export async function submitStagedCheckout(
   );
   const checkoutStatus = status.rows[0];
   if (checkoutStatus.collectionStatus === "pending") {
-    console.info("[PayAssure] Checkout awaiting collection webhook", {
+    console.info("[PayAssure] Checkout accepted and awaiting webhook", {
       saleId: staged.saleId,
       merchantTransactionReference: state.reference,
-      expectedWebhookEventType: "payment.collection.succeeded",
       providerRequestId: initiation.providerRequestId,
       providerSettlementId: initiation.providerSettlementId,
       endpoint: getRegisteredPayassureWebhookUrl() ?? "not configured",
@@ -67,7 +53,7 @@ export async function submitStagedCheckout(
       collectionStatus: checkoutStatus.collectionStatus,
     });
   }
-  res.status(checkoutStatus.collectionStatus === "pending" ? 202 : 200).json({
+  res.status(checkoutStatus.status === "pending" ? 202 : 200).json({
     id: staged.saleId,
     paymentMethod: checkout.paymentMethod,
     reference: state.reference,
@@ -78,4 +64,21 @@ export async function submitStagedCheckout(
     collectionStatus: checkoutStatus.collectionStatus,
     settlementError: checkoutStatus.settlementError,
   });
+
+  if (initiation.providerSettlementId) {
+    try {
+      await processPendingWebhookEvents(
+        initiation.providerSettlementId,
+        state.reference,
+      );
+    } catch (error) {
+      console.error("[PayAssure] Could not process webhooks deferred during settlement initiation", {
+        saleId: staged.saleId,
+        merchantTransactionReference: state.reference,
+        providerSettlementId: initiation.providerSettlementId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        message: error instanceof Error ? error.message : "Unknown deferred webhook error",
+      });
+    }
+  }
 }

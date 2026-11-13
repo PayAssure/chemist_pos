@@ -1,10 +1,10 @@
 import type { PoolClient } from "pg";
-import type { PayassureWebhookEvent } from "../payassure-webhook";
+import type { PayassureSettlementWebhookEvent } from "../payassure-webhook";
 
 export async function applyPayassureCollectionFailure(
   client: PoolClient,
   saleId: number,
-  event: PayassureWebhookEvent,
+  event: PayassureSettlementWebhookEvent,
 ): Promise<void> {
   const reason = String(event.details.failure_reason ?? "PayAssure collection failed");
   const failedSale = await client.query(

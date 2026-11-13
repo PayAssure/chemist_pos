@@ -41,6 +41,16 @@
 .pay-button { width: 100%; margin-bottom: 9px; }
 .checkout-spinner { display: inline-block; width: 15px; height: 15px; margin-right: 9px; vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: checkout-spin .7s linear infinite; }
 @keyframes checkout-spin { to { transform: rotate(360deg); } }
+.float-deposit-modal-waiting { width: min(100%, 360px); min-height: 0; gap: 12px; padding: 18px; }
+.float-deposit-modal-waiting .modal-heading { margin: 0; }
+.float-deposit-waiting { display: flex; min-height: 88px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+.float-deposit-dots { display: flex; align-items: center; gap: 8px; }
+.float-deposit-dots > span { width: 11px; height: 11px; border-radius: 50%; background: var(--green); animation: float-deposit-dot 1s ease-in-out infinite; }
+.float-deposit-dots > span:nth-child(2) { animation-delay: .16s; }
+.float-deposit-dots > span:nth-child(3) { animation-delay: .32s; }
+.float-deposit-waiting p { margin: 0; color: var(--muted); font-size: 13px; font-weight: 600; }
+@keyframes float-deposit-dot { 0%, 60%, 100% { opacity: .35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-5px); } }
+@media (prefers-reduced-motion: reduce) { .float-deposit-dots > span { animation: none; } }
 .helper-text { font-size: 13px; line-height: 1.5; color: var(--muted); margin: 4px 0 0; }
 .prescription-field { margin: 0 0 12px; }
 .prescription-field .helper-text { font-weight: 400; }

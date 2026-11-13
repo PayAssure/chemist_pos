@@ -7,21 +7,38 @@ export const payassureWebhookEventTypes = [
   "payment.settlement.retrying",
   "payment.settlement.completed",
   "payment.settlement.reconciliation_required",
+  "payment.escrow.deposit.succeeded",
 ] as const;
 
 export type PayassureWebhookEventType = (typeof payassureWebhookEventTypes)[number];
 
-export type PayassureWebhookEvent = {
+type WebhookEventBase = {
   id: string;
-  type: PayassureWebhookEventType;
   recipientMerchantId: string;
+  createdAt: string | null;
+  payload: Record<string, unknown>;
+};
+
+export type PayassureSettlementWebhookEvent = WebhookEventBase & {
+  type: Exclude<PayassureWebhookEventType, "payment.escrow.deposit.succeeded">;
   settlementId: string;
   settlementReference: string;
   merchantTransactionReference: string;
   amount: number;
   currency: string;
-  createdAt: string | null;
   details: Record<string, unknown>;
   payouts: unknown[];
-  payload: Record<string, unknown>;
 };
+
+export type PayassureFloatDepositWebhookEvent = WebhookEventBase & {
+  type: "payment.escrow.deposit.succeeded";
+  depositId: string;
+  amount: number;
+  currency: string;
+  receiptNumber: string | null;
+  completedAt: string | null;
+};
+
+export type PayassureWebhookEvent =
+  | PayassureSettlementWebhookEvent
+  | PayassureFloatDepositWebhookEvent;

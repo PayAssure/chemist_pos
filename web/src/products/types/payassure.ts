@@ -54,6 +54,8 @@ export type RetailerFloatDeposit = {
   merchantId: string;
   amount: number;
   payerPhoneNumber: string;
+  receiptNumber?: string;
+  completedAt?: string;
   status: string;
   merchantRequestId?: string;
   checkoutRequestId?: string;

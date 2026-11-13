@@ -1,5 +1,10 @@
 import { useCallback, useRef, useState } from "react";
-import { clearCheckoutReference, getCheckoutStatus, initiateCheckout, waitForCheckout } from "./checkoutApi";
+import {
+  clearCheckoutReference,
+  initiateCheckout,
+  openCheckoutStatusStream,
+  waitForCheckout,
+} from "./checkoutApi";
 import { handleCheckoutFailure } from "./checkoutFailure";
 import type { CartItem } from "../types";
 
@@ -36,7 +41,7 @@ export function useCheckout(
     setNotice("");
     setPending(true);
     setStage("initiating");
-    const ref = reference.current || `POS-${window.crypto.randomUUID()}`;
+    let ref = reference.current || `POS-${window.crypto.randomUUID()}`;
     reference.current = ref;
     try {
       window.sessionStorage.setItem("payassure-checkout-reference", ref);
@@ -44,21 +49,53 @@ export function useCheckout(
       console.warn("Could not persist the checkout reference for a retry:", reason);
     }
     let acknowledged = false;
+    let statusStream: ReturnType<typeof openCheckoutStatusStream> | null = null;
     try {
+      statusStream = openCheckoutStatusStream(ref);
+      await statusStream.ready;
+      console.info("[PayAssure checkout] Starting payment request after stream is ready", {
+        merchantTransactionReference: ref,
+      });
       const initial = await initiateCheckout(ref, method, items, payerName, payerPhone, mpesaPhone);
       acknowledged = true;
-      const status = await waitForCheckout(ref, initial, () => setStage("waiting"));
-      if (status.collectionStatus === "pending") {
-        setNotice(retrying
-          ? "The new checkout is still pending. The earlier payment attempt also remains unresolved; check both statuses before retrying."
-          : "No collection webhook was received within two minutes. This checkout remains pending; do not create a new sale.");
-        await Promise.all([refreshData(), refreshDashboard()]).catch((reason) => {
-          console.warn("Could not refresh data while checkout remains pending:", reason);
+      if (initial.reference !== ref) {
+        statusStream.close();
+        ref = initial.reference;
+        reference.current = ref;
+        try {
+          window.sessionStorage.setItem("payassure-checkout-reference", ref);
+        } catch (reason) {
+          console.warn("Could not persist the canonical checkout reference for a retry:", reason);
+        }
+        statusStream = openCheckoutStatusStream(ref);
+        await statusStream.ready;
+      }
+      console.info("[PayAssure checkout] Payment request accepted by POS", {
+        merchantTransactionReference: ref,
+        saleId: initial.id,
+        saleStatus: initial.status,
+        settlementStatus: initial.settlementStatus,
+        collectionStatus: initial.collectionStatus,
+      });
+      const status = await waitForCheckout(statusStream, initial, () => setStage("waiting"));
+      console.info("[PayAssure checkout] Terminal checkout status applied", {
+        merchantTransactionReference: ref,
+        saleStatus: status.status,
+        settlementStatus: status.settlementStatus,
+        collectionStatus: status.collectionStatus,
+      });
+      if (status.status !== "completed" || status.settlementStatus !== "completed") {
+        const message =
+          status.settlementError ?? "PayAssure settlement did not complete. The sale was not completed.";
+        reference.current = "";
+        clearCheckoutReference();
+        setError(message);
+        setPending(false);
+        setStage(null);
+        void Promise.all([refreshData(), refreshDashboard()]).catch((reason) => {
+          console.warn("Could not refresh data after checkout failure:", reason);
         });
         return false;
-      }
-      if (status.collectionStatus !== "succeeded") {
-        throw new Error(status.settlementError ?? "PayAssure did not confirm collection. The sale was not completed.");
       }
       reference.current = "";
       clearCheckoutReference();
@@ -66,15 +103,14 @@ export function useCheckout(
       setPayerName("");
       setPayerPhone("");
       const message = retrying
-        ? "PayAssure confirmed this new checkout. Note: the earlier payment attempt remains unresolved and could also complete."
-        : "PayAssure confirmed collection and the sale was saved.";
+        ? "PayAssure completed settlement for this new checkout. Note: the earlier payment attempt remains unresolved and could also complete."
+        : "PayAssure completed settlement and the sale was saved.";
       setNotice(message);
-      try {
-        await Promise.all([refreshData(), refreshDashboard()]);
-      } catch (reason) {
+      setPending(false);
+      setStage(null);
+      void Promise.all([refreshData(), refreshDashboard()]).catch((reason) => {
         console.warn("Checkout succeeded, but POS data could not refresh:", reason);
-        setNotice(`${message} POS data could not refresh.`);
-      }
+      });
       return true;
     } catch (reason) {
       return handleCheckoutFailure({
@@ -87,6 +123,7 @@ export function useCheckout(
         retry: () => checkout(method, mpesaPhone, true),
       });
     } finally {
+      statusStream?.close();
       setPending(false);
       setStage(null);
     }

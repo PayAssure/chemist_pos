@@ -7,6 +7,7 @@ export function dashboardTransactions(startDate: string, endDate: string) {
               s.total_cents AS "totalCents", s.created_at AS "createdAt",
               CASE WHEN s.status = 'failed' THEN settlement.last_error END AS "failureReason",
               s.payer_name AS "payerName", s.payer_phone AS "payerPhone",
+              settlement.collection_status AS "collectionStatus",
               settlement.id AS "settlementId", settlement.status AS "settlementStatus",
               settlement.last_error AS "settlementError",
               settlement.attempt_count AS "settlementAttemptCount",
@@ -23,7 +24,8 @@ export function dashboardTransactions(startDate: string, endDate: string) {
        SELECT ('failed-' || id)::text AS id, payment_method AS "paymentMethod",
               'failed' AS status, total_cents AS "totalCents", created_at AS "createdAt",
               failure_reason AS "failureReason", NULL::text AS "payerName",
-              NULL::text AS "payerPhone", NULL::integer AS "settlementId",
+              NULL::text AS "payerPhone", NULL::text AS "collectionStatus",
+              NULL::integer AS "settlementId",
               NULL::text AS "settlementStatus", NULL::text AS "settlementError",
               NULL::integer AS "settlementAttemptCount", NULL::timestamptz AS "nextRetryAt"
        FROM failed_checkout_attempts

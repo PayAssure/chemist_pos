@@ -1,12 +1,15 @@
 import type { PoolClient } from "pg";
-import type { PayassureWebhookEvent } from "../payassure-webhook";
+import type { PayassureSettlementWebhookEvent } from "../payassure-webhook";
 import { applyPayassureCollectionFailure } from "./webhook-event-failure";
 import { applyPayassureSettlementEvent } from "./webhook-event-settlement";
-import { confirmPayassureCollectionInventory } from "./webhook-event-stock";
+import {
+  completePayassureSaleAfterSettlement,
+  confirmPayassureCollectionInventory,
+} from "./webhook-event-stock";
 
 export async function applyPayassureWebhookEvent(
   client: PoolClient,
-  event: PayassureWebhookEvent,
+  event: PayassureSettlementWebhookEvent,
 ): Promise<number> {
   type CheckoutSettlement = {
     id: number;
@@ -32,6 +35,7 @@ export async function applyPayassureWebhookEvent(
     [event.merchantTransactionReference],
   );
   let sale = result.rows[0];
+  let isChildSettlement = false;
   if (!sale) {
     const settlementMatch = await client.query<CheckoutSettlement>(
       `SELECT sale.id, sale.status, sale.total_cents AS "totalCents",
@@ -56,11 +60,42 @@ export async function applyPayassureWebhookEvent(
     }
   }
   if (!sale) {
+    const childSettlementMatch = await client.query<CheckoutSettlement>(
+      `SELECT sale.id, sale.status, sale.total_cents AS "totalCents",
+              settlement.collection_status AS "collectionStatus",
+              settlement.status AS "settlementStatus",
+              settlement.last_event_at AS "lastEventAt",
+              settlement.provider_settlement_id AS "providerSettlementId",
+              settlement.merchant_transaction_reference AS "merchantTransactionReference"
+       FROM payassure_settlements settlement
+       JOIN sales sale ON sale.id = settlement.sale_id
+       WHERE left($1, length(settlement.merchant_transaction_reference) + 1)
+             = settlement.merchant_transaction_reference || '-'
+       ORDER BY length(settlement.merchant_transaction_reference) DESC
+       LIMIT 1
+       FOR UPDATE OF settlement, sale`,
+      [event.settlementReference],
+    );
+    sale = childSettlementMatch.rows[0];
+    isChildSettlement = Boolean(sale);
+    if (sale) {
+      console.info("[PayAssure] Child payout webhook matched to parent checkout", {
+        eventMerchantTransactionReference: event.merchantTransactionReference,
+        eventSettlementReference: event.settlementReference,
+        storedMerchantTransactionReference: sale.merchantTransactionReference,
+        eventSettlementId: event.settlementId,
+      });
+    }
+  }
+  if (!sale) {
     throw Object.assign(
       new Error("No checkout matches the PayAssure merchant transaction reference"),
       { status: 404 },
     );
   }
+  isChildSettlement ||= event.settlementReference.startsWith(
+    `${sale.merchantTransactionReference}-`,
+  );
 
   const providerSettlementConflict = await client.query(
     `SELECT 1
@@ -84,9 +119,12 @@ export async function applyPayassureWebhookEvent(
     });
   }
 
+  const eventAmountCents = Math.round(event.amount * 100);
   if (
     event.currency !== "KES" ||
-    Math.round(event.amount * 100) !== Number(sale.totalCents)
+    (isChildSettlement
+      ? eventAmountCents <= 0 || eventAmountCents > Number(sale.totalCents)
+      : eventAmountCents !== Number(sale.totalCents))
   ) {
     throw Object.assign(new Error("PayAssure event amount or currency does not match the checkout"), {
       status: 409,
@@ -98,6 +136,10 @@ export async function applyPayassureWebhookEvent(
     eventTime !== null &&
     sale.lastEventAt !== null &&
     eventTime.getTime() < new Date(sale.lastEventAt).getTime();
+
+  if (isChildSettlement && event.type !== "payment.settlement.partially_failed") {
+    return sale.id;
+  }
 
   if (event.type === "payment.collection.succeeded") {
     if (sale.collectionStatus !== "succeeded") {
@@ -117,6 +159,7 @@ export async function applyPayassureWebhookEvent(
        WHERE sale_id = $1`,
       [sale.id, event.settlementId, event.type, JSON.stringify(event.payload), event.createdAt],
     );
+    await completePayassureSaleAfterSettlement(client, sale.id);
     return sale.id;
   }
 
@@ -134,5 +177,8 @@ export async function applyPayassureWebhookEvent(
   ) return sale.id;
 
   await applyPayassureSettlementEvent(client, sale.id, event);
+  if (event.type === "payment.settlement.completed") {
+    await completePayassureSaleAfterSettlement(client, sale.id);
+  }
   return sale.id;
 }

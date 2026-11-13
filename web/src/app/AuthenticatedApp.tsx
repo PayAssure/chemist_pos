@@ -26,7 +26,7 @@ export default function AuthenticatedApp({ email, setEmail, notifications }: Pro
   const data = usePosData(email, tab, setError);
   const profile = useProfile(email, setError, setNotice);
   const floating = useRetailerFloat(email);
-  const deposit = useFloatDeposit(floating.refresh, setError, setNotice);
+  const deposit = useFloatDeposit(floating.checkBalance, setError, setNotice);
   const cart = useCart(data.products);
   const checkout = useCheckout(cart.items, cart.setCart, data.refreshData, data.refreshDashboard, setError, setNotice);
   const actions = useInventoryActions(data.refreshData, setError, setNotice);

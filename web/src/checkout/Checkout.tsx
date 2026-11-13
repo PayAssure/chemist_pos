@@ -29,7 +29,7 @@ function Checkout({
   const creditDetailsMissing = !payerName.trim() || payerPhone.replace(/\D/g, "").length < 7;
   const progressLabel = checkoutStage === "initiating"
     ? "Initiating payment…"
-    : "Waiting for PayAssure webhook…";
+    : "Awaiting PayAssure webhook…";
 
   return (
     <section className="checkout-layout">

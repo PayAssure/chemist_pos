@@ -34,8 +34,10 @@ export function useRetailerFloat(email: string | null) {
       setBalance(next);
       setCheckedAt(next.asOf);
       setRetailerFloat((current) => current ? { ...current, ...next } : current);
+      return next;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not check PayAssure float balance");
+      return null;
     } finally {
       setChecking(false);
     }
