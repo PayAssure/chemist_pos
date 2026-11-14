@@ -18,6 +18,9 @@ export async function api<T>(url: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
   });
+  if (response.status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new Event("auth:unauthorized"));
+  }
   if (response.status === 204) return undefined as T;
   const body = (await response.json()) as T & { error?: string; code?: string };
   if (!response.ok) {

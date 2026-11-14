@@ -45,6 +45,7 @@ export const retailerFloatSchema = retailerFloatBalanceSchema.extend({
 }).passthrough();
 
 export const retailerFloatCheckSchema = retailerFloatBalanceSchema.extend({
+  dailyFloat: z.number(),
   asOf: z.string(),
 }).passthrough();
 

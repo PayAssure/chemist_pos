@@ -16,15 +16,16 @@ type Props = {
 export default function FloatSummary(props: Props) {
   const { data, balance, loading, error, checkedAt, canDeposit, checking, onDeposit, onCheck } = props;
   const currency = balance?.currency ?? data?.currency ?? "KES";
+  const dailyFloat = balance?.dailyFloat ?? data?.dailyFloat;
   return (
     <section className="summary-card float-summary-card" aria-label="PayAssure float balance">
       <div className="float-summary-details">
-        <span>Available PayAssure float</span>
+        <span>Available balance</span>
         <strong>{balance
           ? currencyAmount(balance.availableBalance, currency)
           : data ? currencyAmount(data.availableBalance, currency) : "—"}</strong>
-        <small>{data
-          ? `Daily float: ${currencyAmount(data.dailyFloat, currency)}`
+        <small>{dailyFloat !== undefined
+          ? `Daily float: ${currencyAmount(dailyFloat, currency)}`
           : loading ? "Daily float: loading…" : "Daily float: unavailable"}</small>
         {error && <small className="expiry-warning" role="status">{error}</small>}
       </div>
