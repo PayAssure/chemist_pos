@@ -50,6 +50,9 @@ function CheckoutProducts({
             >
               <span className="product-initial">{product.name.slice(0, 1).toUpperCase()}</span>
               <strong>{product.name}</strong>
+              {product.supplierName && (
+                <small>supplier-{product.supplierName.toLowerCase()}</small>
+              )}
               <small>
                 {[product.brand, product.strength, product.dosageForm || product.activeIngredient]
                   .filter(Boolean).join(" · ") || product.category}

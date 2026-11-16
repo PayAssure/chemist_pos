@@ -45,9 +45,16 @@
 @media (max-width: 430px) {
   .welcome-summary-cards { width: 100%; }
   .float-summary-card { grid-template-columns: 1fr; gap: 8px; padding: 12px; }
-  .float-summary-action-group { align-items: flex-start; }
-  .float-summary-actions { justify-content: flex-start; }
-  .float-summary-action-group .float-balance-checked { text-align: left; }
+  .float-summary-details {
+    display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 3px 8px;
+  }
+  .float-summary-details > span { grid-column: 1; }
+  .float-summary-details > strong { grid-column: 2; text-align: right; }
+  .float-summary-details > small { grid-column: 1 / -1; }
+  .float-summary-action-group { width: 100%; align-items: stretch; }
+  .float-summary-actions { width: 100%; }
+  .float-summary-actions .button { flex: 1 1 0; }
+  .float-summary-action-group .float-balance-checked { width: 100%; text-align: left; }
   .field-row { grid-template-columns: 1fr; }
   .panel { padding: 16px; }
   .topbar { padding-right: 12px; padding-left: 12px; }
