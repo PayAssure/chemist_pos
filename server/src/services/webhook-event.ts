@@ -137,7 +137,11 @@ export async function applyPayassureWebhookEvent(
     sale.lastEventAt !== null &&
     eventTime.getTime() < new Date(sale.lastEventAt).getTime();
 
-  if (isChildSettlement && event.type !== "payment.settlement.partially_failed") {
+  if (
+    isChildSettlement &&
+    event.type !== "payment.settlement.partially_failed" &&
+    event.type !== "payment.settlement.completed"
+  ) {
     return sale.id;
   }
 
