@@ -21,6 +21,7 @@ export default function Welcome({ floating, deposit, profile }: Props) {
         <FloatSummary
           data={floating.retailerFloat}
           balance={floating.balance}
+          liveBalance={floating.liveBalance}
           loading={floating.loading}
           error={floating.error}
           checkedAt={floating.checkedAt}

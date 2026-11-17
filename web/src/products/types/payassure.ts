@@ -55,6 +55,11 @@ export type RetailerFloatBalance = Pick<
   | "availableBalance"
 > & { asOf: string };
 
+export type RetailerFloatBalanceUpdate = Pick<
+  RetailerFloatData,
+  "currency" | "availableBalance"
+> & { asOf: string };
+
 export type RetailerFloatDeposit = {
   depositId: string;
   merchantId: string;

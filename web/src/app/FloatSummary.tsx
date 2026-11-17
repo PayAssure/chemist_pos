@@ -1,9 +1,14 @@
 import { currencyAmount } from "../lib/money";
-import type { RetailerFloatBalance, RetailerFloatData } from "../types";
+import type {
+  RetailerFloatBalance,
+  RetailerFloatBalanceUpdate,
+  RetailerFloatData,
+} from "../types";
 
 type Props = {
   data: RetailerFloatData | null;
   balance: RetailerFloatBalance | null;
+  liveBalance: RetailerFloatBalanceUpdate | null;
   loading: boolean;
   error: string;
   checkedAt: string;
@@ -14,16 +19,18 @@ type Props = {
 };
 
 export default function FloatSummary(props: Props) {
-  const { data, balance, loading, error, checkedAt, canDeposit, checking, onDeposit, onCheck } = props;
-  const currency = balance?.currency ?? data?.currency ?? "KES";
+  const { data, balance, liveBalance, loading, error, checkedAt, canDeposit, checking, onDeposit, onCheck } = props;
+  const currency = liveBalance?.currency ?? balance?.currency ?? data?.currency ?? "KES";
   const dailyFloat = balance?.dailyFloat ?? data?.dailyFloat;
   return (
     <section className="summary-card float-summary-card" aria-label="PayAssure float balance">
       <div className="float-summary-details">
         <span>Available balance</span>
-        <strong>{balance
-          ? currencyAmount(balance.availableBalance, currency)
-          : data ? currencyAmount(data.availableBalance, currency) : "—"}</strong>
+        <strong>{liveBalance
+          ? currencyAmount(liveBalance.availableBalance, currency)
+          : balance
+            ? currencyAmount(balance.availableBalance, currency)
+            : data ? currencyAmount(data.availableBalance, currency) : "—"}</strong>
         <small>{dailyFloat !== undefined
           ? `Daily float: ${currencyAmount(dailyFloat, currency)}`
           : loading ? "Daily float: loading…" : "Daily float: unavailable"}</small>

@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import type { RetailerFloatBalance, RetailerFloatData } from "../types";
+import type {
+  RetailerFloatBalance,
+  RetailerFloatBalanceUpdate,
+  RetailerFloatData,
+} from "../types";
+import { openRetailerFloatBalanceStream } from "./floatBalanceApi";
 
 export function useRetailerFloat(email: string | null) {
+  const balanceAsOf = useRef(0);
   const [retailerFloat, setRetailerFloat] = useState<RetailerFloatData | null>(null);
   const [balance, setBalance] = useState<RetailerFloatBalance | null>(null);
+  const [liveBalance, setLiveBalance] = useState<RetailerFloatBalanceUpdate | null>(null);
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
@@ -16,6 +23,15 @@ export function useRetailerFloat(email: string | null) {
     try {
       const data = await api<RetailerFloatData>("/api/payassure/float", { cache: "no-store" });
       setRetailerFloat(data);
+      const updatedAt = Date.parse(data.updatedAt);
+      if (Number.isFinite(updatedAt)) {
+        balanceAsOf.current = Math.max(balanceAsOf.current, updatedAt);
+      }
+      setLiveBalance((current) => (
+        current && Date.parse(current.asOf) > (Number.isFinite(updatedAt) ? updatedAt : 0)
+          ? current
+          : null
+      ));
       setCheckedAt(new Date().toISOString());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load PayAssure float");
@@ -32,8 +48,17 @@ export function useRetailerFloat(email: string | null) {
         method: "POST", cache: "no-store",
       });
       setBalance(next);
-      setCheckedAt(next.asOf);
+      const checkedAtTime = Date.parse(next.asOf);
+      const hasNewerBalance = Number.isFinite(checkedAtTime) &&
+        balanceAsOf.current > checkedAtTime;
+      if (Number.isFinite(checkedAtTime)) {
+        balanceAsOf.current = Math.max(balanceAsOf.current, checkedAtTime);
+      }
+      if (!hasNewerBalance) setCheckedAt(next.asOf);
       setRetailerFloat((current) => current ? { ...current, ...next } : current);
+      setLiveBalance((current) => (
+        current && Date.parse(current.asOf) > Date.parse(next.asOf) ? current : null
+      ));
       return next;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not check PayAssure float balance");
@@ -47,11 +72,63 @@ export function useRetailerFloat(email: string | null) {
     if (!email) {
       setRetailerFloat(null);
       setBalance(null);
+      setLiveBalance(null);
+      balanceAsOf.current = 0;
       setError("");
       return;
     }
-    void refresh();
+    let active = true;
+    let stream: ReturnType<typeof openRetailerFloatBalanceStream> | null = null;
+    balanceAsOf.current = 0;
+    setLiveBalance(null);
+    void refresh().finally(() => {
+      if (!active) return;
+      stream = openRetailerFloatBalanceStream(
+        (update) => {
+          const updateAsOf = Date.parse(update.asOf);
+          if (updateAsOf <= balanceAsOf.current) return;
+          balanceAsOf.current = updateAsOf;
+          setLiveBalance((current) => (
+            current && Date.parse(current.asOf) > Date.parse(update.asOf) ? current : update
+          ));
+          setCheckedAt(update.asOf);
+          setRetailerFloat((current) => current
+            ? {
+                ...current,
+                availableBalance: update.availableBalance,
+                currency: update.currency,
+                updatedAt: update.asOf,
+              }
+            : current);
+          setBalance((current) => current
+            ? {
+                ...current,
+                availableBalance: update.availableBalance,
+                currency: update.currency,
+                asOf: update.asOf,
+              }
+            : current);
+        },
+        (reason) => {
+          console.error("[PayAssure] Could not read live retailer float balance", reason);
+        },
+      );
+    });
+    return () => {
+      active = false;
+      stream?.close();
+    };
   }, [email, refresh]);
 
-  return { retailerFloat, balance, loading, checking, error, checkedAt, refresh, checkBalance };
+  return {
+    retailerFloat,
+    balance,
+    liveBalance,
+    loading,
+    checking,
+    error,
+    checkedAt,
+    refresh,
+    checkBalance,
+  };
 }

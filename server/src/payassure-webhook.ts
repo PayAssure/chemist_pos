@@ -60,7 +60,10 @@ export function parsePayassureWebhookEvent(
   if (!(payassureWebhookEventTypes as readonly string[]).includes(type)) {
     throw new Error(`Unsupported PayAssure event type: ${type}`);
   }
-  const createdAt = typeof parsed.created_at === "string" ? parsed.created_at : null;
+  const createdAt =
+    typeof parsed.created_at === "string" && Number.isFinite(Date.parse(parsed.created_at))
+      ? parsed.created_at
+      : null;
 
   if (type === "payment.escrow.deposit.succeeded") {
     if (!isRecord(data.deposit)) {
@@ -121,6 +124,26 @@ export function parsePayassureWebhookEvent(
     throw new Error("Webhook is missing required event, recipient, or settlement fields");
   }
 
+  let escrowBalance: PayassureSettlementWebhookEvent["escrowBalance"] = null;
+  if (data.escrow_balance !== undefined) {
+    if (
+      !isRecord(data.escrow_balance) ||
+      typeof data.escrow_balance.balance !== "number" ||
+      !Number.isFinite(data.escrow_balance.balance) ||
+      typeof data.escrow_balance.available_balance !== "number" ||
+      !Number.isFinite(data.escrow_balance.available_balance) ||
+      typeof data.escrow_balance.currency !== "string" ||
+      !data.escrow_balance.currency
+    ) {
+      throw new Error("Webhook escrow balance is malformed");
+    }
+    escrowBalance = {
+      balance: data.escrow_balance.balance,
+      availableBalance: data.escrow_balance.available_balance,
+      currency: data.escrow_balance.currency,
+    };
+  }
+
   const details = isRecord(data.details) ? data.details : {};
   const payouts = Array.isArray(data.payouts) ? data.payouts : [];
   return {
@@ -132,6 +155,7 @@ export function parsePayassureWebhookEvent(
     merchantTransactionReference,
     amount,
     currency,
+    escrowBalance,
     createdAt,
     details,
     payouts,

@@ -19,6 +19,12 @@ type WebhookEventBase = {
   payload: Record<string, unknown>;
 };
 
+export type PayassureEscrowBalance = {
+  balance: number;
+  availableBalance: number;
+  currency: string;
+};
+
 export type PayassureSettlementWebhookEvent = WebhookEventBase & {
   type: Exclude<PayassureWebhookEventType, "payment.escrow.deposit.succeeded">;
   settlementId: string;
@@ -26,6 +32,7 @@ export type PayassureSettlementWebhookEvent = WebhookEventBase & {
   merchantTransactionReference: string;
   amount: number;
   currency: string;
+  escrowBalance: PayassureEscrowBalance | null;
   details: Record<string, unknown>;
   payouts: unknown[];
 };

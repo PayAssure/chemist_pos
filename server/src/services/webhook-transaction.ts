@@ -11,6 +11,7 @@ import {
   type CheckoutStatusUpdate,
 } from "./checkout-status-events";
 import { publishFloatDepositStatus } from "./float-deposit-status-events";
+import { publishRetailerFloatBalance } from "./retailer-float-balance-events";
 import { applyPayassureWebhookEvent } from "./webhook-event";
 
 export function webhookContext(event: PayassureWebhookEvent) {
@@ -177,6 +178,20 @@ export async function processWebhookTransaction(
   } else {
     console.warn("[PayAssure] Webhook committed without a checkout status to publish", context);
   }
+  if (event.escrowBalance) {
+    try {
+      await publishRetailerFloatBalance({
+        merchantId: event.recipientMerchantId,
+        ...event.escrowBalance,
+        asOf: event.createdAt ?? new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[PayAssure] Could not notify retailer float balance listeners", {
+        ...context,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
   console.info("[PayAssure] Webhook processed", {
     ...context,
     status: "processed",
@@ -217,6 +232,13 @@ export async function processPendingWebhookEvents(
       [providerSettlementId, merchantTransactionReference],
     );
     let processedCount = 0;
+    let latestFloatBalance: {
+      merchantId: string;
+      balance: number;
+      availableBalance: number;
+      currency: string;
+      asOf: string;
+    } | null = null;
     for (const row of pending.rows) {
       const eventId = typeof row.payload.id === "string" ? row.payload.id : undefined;
       const eventType = typeof row.payload.type === "string" ? row.payload.type : undefined;
@@ -233,6 +255,13 @@ export async function processPendingWebhookEvents(
       try {
         await applyWebhookEvent(client, event, row.id);
         processedCount += 1;
+        if (event.escrowBalance) {
+          latestFloatBalance = {
+            merchantId: event.recipientMerchantId,
+            ...event.escrowBalance,
+            asOf: event.createdAt ?? new Date().toISOString(),
+          };
+        }
       } catch (error) {
         if (errorStatus(error) !== 404) throw error;
         console.warn("[PayAssure] Deferred webhook still has no matching checkout", {
@@ -264,6 +293,17 @@ export async function processPendingWebhookEvents(
         await publishCheckoutStatus(finalStatus.merchantTransactionReference);
       } catch (error) {
         console.error("[PayAssure] Could not notify checkout status listeners", error);
+      }
+    }
+    if (latestFloatBalance) {
+      try {
+        await publishRetailerFloatBalance(latestFloatBalance);
+      } catch (error) {
+        console.error("[PayAssure] Could not notify retailer float balance listeners", {
+          providerSettlementId,
+          merchantTransactionReference,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
       }
     }
     if (processedCount > 0) {
