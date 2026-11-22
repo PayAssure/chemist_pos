@@ -70,7 +70,7 @@ export function InventoryProductRow({ product, batch, onSelect }: Props) {
   return (
     <tr key={batch?.id ?? product.id} {...rowProps}>
       <MedicineDetails product={product} />
-      <td>{product.supplierName}</td>
+      <td>{product.supplierName ?? "Not assigned"}</td>
       <td>
         <strong>{money(product.priceCents)}</strong>
         <small className="table-subtitle">

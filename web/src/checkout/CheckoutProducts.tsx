@@ -17,7 +17,7 @@ function CheckoutProducts({
     const text = [
       product.name, product.brand, product.preferredName, product.category,
       product.activeIngredient, product.dosageForm, product.strength,
-      product.supplierName, product.barcode ?? "", product.stockCode ?? "",
+      product.supplierName ?? "", product.barcode ?? "", product.stockCode ?? "",
     ].join(" ").toLocaleLowerCase();
     return terms.every((term) => text.includes(term));
   });
@@ -46,6 +46,9 @@ function CheckoutProducts({
               className="product-tile"
               key={product.id}
               disabled={isCheckingOut || product.saleableCount === 0}
+              title={isCheckingOut
+                ? "A sale is being processed."
+                : product.saleableCount === 0 ? "No unexpired stock is available." : undefined}
               onClick={() => onAddProduct(product)}
             >
               <span className="product-initial">{product.name.slice(0, 1).toUpperCase()}</span>

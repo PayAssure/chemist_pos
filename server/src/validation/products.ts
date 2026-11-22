@@ -15,7 +15,7 @@ export const productSchema = z.object({
   barcode: z.string().trim().max(120).nullable().default(null),
   stockCode: z.string().trim().max(80).nullable().default(null),
   description: z.string().trim().max(1000).default(""),
-  supplierId: z.number().int().positive(),
+  supplierId: z.number().int().positive().nullable().default(null),
   priceCents: z.number().int().positive().max(2147483647),
   buyingPriceCents: z.number().int().positive().max(2147483647),
   stockCount: z.number().int().min(0).max(2147483647),

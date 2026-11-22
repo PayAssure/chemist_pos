@@ -9,7 +9,7 @@ export async function createProduct(
 ): Promise<void> {
   const parsed = productSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Provide a valid product and supplier" });
+    res.status(400).json({ error: "Provide a valid product" });
     return;
   }
   const client = await pool.connect().catch((error: unknown) => {
@@ -26,7 +26,10 @@ export async function createProduct(
           dosage_form, strength, sale_unit, units_per_pack, reorder_level, barcode,
           stock_code, description)
        SELECT $1, s.id, $15, $16, $17, $3, $4, $5, $6, $7, $8, $9, $10,
-              $11, $12, $13, $14, $18 FROM suppliers s WHERE s.id = $2
+                $11, $12, $13, $14, $18
+         FROM (SELECT $2::integer AS id) requested
+         LEFT JOIN suppliers s ON s.id = requested.id
+         WHERE requested.id IS NULL OR s.id IS NOT NULL
        RETURNING id`,
       [
         parsed.data.name,
@@ -51,7 +54,7 @@ export async function createProduct(
     );
     if (result.rowCount === 0) {
       await client.query("ROLLBACK");
-      res.status(400).json({ error: "Choose a valid supplier" });
+      res.status(400).json({ error: "Choose a valid supplier or leave the supplier blank" });
       return;
     }
     const id = Number(result.rows[0].id);

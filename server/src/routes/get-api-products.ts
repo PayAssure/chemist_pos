@@ -35,7 +35,7 @@ router.get("/api/products", requireAuth, async (_req, res, next) => {
               ), 0) AS "saleableCount",
                       s.name AS "supplierName",
                       s.payassure_merchant_id AS "merchantId"
-       FROM products p JOIN suppliers s ON s.id = p.supplier_id
+       FROM products p LEFT JOIN suppliers s ON s.id = p.supplier_id
        ORDER BY p.name`,
     );
     res.json(result.rows);

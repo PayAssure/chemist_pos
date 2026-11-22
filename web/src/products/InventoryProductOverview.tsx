@@ -15,7 +15,7 @@ export function InventoryProductOverview({ product, batch, onEdit }: Props) {
         <div><dt>Brand</dt><dd>{product.brand || "Not set"}</dd></div>
         <div><dt>Active ingredient</dt><dd>{product.activeIngredient || "Not set"}</dd></div>
         <div><dt>Strength / form</dt><dd>{[product.strength, product.dosageForm].filter(Boolean).join(" · ") || "Not set"}</dd></div>
-        <div><dt>Supplier</dt><dd>{product.supplierName}</dd></div>
+        <div><dt>Supplier</dt><dd>{product.supplierName ?? "Not assigned"}</dd></div>
         <div><dt>Retail price</dt><dd>{money(product.priceCents)}</dd></div>
         <div><dt>Buying price</dt><dd>{product.buyingPriceCents === null ? "Not set" : money(product.buyingPriceCents)}</dd></div>
         {batch && <div><dt>Batch expiry ({batch.batchCode})</dt><dd>{batch.expiryDate ?? "Not set"}</dd></div>}

@@ -19,14 +19,17 @@ function PayassureEditDialog({ editor }: { editor: PayassureEditor }) {
             <p>Changes are sent directly to PayAssure.</p>
           </div>
           <button className="modal-close" type="button" aria-label="Close dialog"
-            onClick={cancelEdit} disabled={saving}>×</button>
+            onClick={cancelEdit} disabled={saving}
+            title={saving ? "Changes are being saved." : undefined}>×</button>
         </div>
         <form className="form-panel" onSubmit={(event: FormEvent<HTMLFormElement>) => void saveEdit(event)}>
           <fieldset className="retailer-edit-fieldset" disabled={saving}>
             <PayassureEditFields editor={editor} />
             <div className="modal-actions">
-              <button className="button button-quiet" type="button" onClick={cancelEdit}>Cancel</button>
-              <button className="button button-primary" type="submit">
+              <button className="button button-quiet" type="button" onClick={cancelEdit}
+                disabled={saving} title={saving ? "Changes are being saved." : undefined}>Cancel</button>
+              <button className="button button-primary" type="submit" disabled={saving}
+                title={saving ? "Changes are being saved." : undefined}>
                 {saving ? "Saving…" : "Save changes"}
               </button>
             </div>

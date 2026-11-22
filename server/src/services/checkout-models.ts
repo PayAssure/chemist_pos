@@ -11,7 +11,7 @@ export interface CheckoutProduct {
   name: string;
   price_cents: number;
   buying_price_cents: number | null;
-  supplier_id: number;
+  supplier_id: number | null;
   stock_count: number;
   prescription_required: boolean;
 }

@@ -29,7 +29,9 @@ function CartPanel(props: CartPanelProps) {
     <aside className="panel cart-panel">
       <div className="panel-heading">
         <div><h2>Current sale</h2><p>{cartItems.length} different items</p></div>
-        <button className="text-button" disabled={isCheckingOut} onClick={() => onCartChange({})}>
+        <button className="text-button" disabled={isCheckingOut}
+          title={isCheckingOut ? "A sale is being processed." : undefined}
+          onClick={() => onCartChange({})}>
           Clear
         </button>
       </div>
@@ -66,6 +68,13 @@ function CartPanel(props: CartPanelProps) {
         className="button button-primary pay-button"
         disabled={isCheckingOut || cartItems.length === 0 ||
           (paymentMethod === "credit" && creditDetailsMissing)}
+        title={isCheckingOut
+          ? "A sale is being processed."
+          : cartItems.length === 0
+            ? "Add at least one product to the sale."
+            : paymentMethod === "credit" && creditDetailsMissing
+              ? "Enter the payer’s name and phone number to complete a credit sale."
+              : undefined}
         onClick={onCheckout}
         aria-busy={isCheckingOut}
       >
@@ -76,6 +85,9 @@ function CartPanel(props: CartPanelProps) {
       <button
         className="button button-secondary pay-button"
         disabled={isCheckingOut || cartItems.length === 0}
+        title={isCheckingOut
+          ? "A sale is being processed."
+          : cartItems.length === 0 ? "Add at least one product to the sale." : undefined}
         onClick={onMpesaOpen}
       >{isCheckingOut ? progressLabel : "Pay with M-Pesa"}</button>
       <p className="helper-text">

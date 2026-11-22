@@ -23,7 +23,9 @@ export default function FloatDepositDialog({ deposit }: Props) {
               <p>Request an M-Pesa STK prompt for this retailer’s PayAssure float.</p>
             )}
           </div>
-          <button className="modal-close" type="button" aria-label="Close dialog" onClick={deposit.close} disabled={busy || hasPendingDeposit}>×</button>
+          <button className="modal-close" type="button" aria-label="Close dialog" onClick={deposit.close}
+            disabled={busy || hasPendingDeposit}
+            title={busy ? "Wait for the deposit request to finish." : hasPendingDeposit ? "Reconnect to the pending deposit confirmation before closing." : undefined}>×</button>
         </div>
         {deposit.awaitingWebhook ? (
           <div
@@ -53,8 +55,11 @@ export default function FloatDepositDialog({ deposit }: Props) {
                 onChange={(event) => deposit.setPhone(event.target.value)} /></label>
               {deposit.error && <p className="alert alert-error" role="alert">{deposit.error}</p>}
               <div className="modal-actions">
-                <button className="button button-quiet" type="button" onClick={deposit.close} disabled={busy || hasPendingDeposit}>Cancel</button>
-                <button className="button button-primary" type="submit" disabled={busy}>
+                <button className="button button-quiet" type="button" onClick={deposit.close}
+                  disabled={busy || hasPendingDeposit}
+                  title={busy ? "Wait for the deposit request to finish." : hasPendingDeposit ? "Reconnect to the pending deposit confirmation before cancelling." : undefined}>Cancel</button>
+                <button className="button button-primary" type="submit" disabled={busy}
+                  title={busy ? "The deposit request is being submitted or confirmed." : undefined}>
                   {deposit.loading
                     ? "Submitting deposit…"
                     : hasPendingDeposit

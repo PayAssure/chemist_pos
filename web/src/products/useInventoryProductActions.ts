@@ -24,7 +24,7 @@ export function useInventoryProductActions({ refreshData, setError, setNotice }:
           unitsPerPack: form.get("unitsPerPack") ? Number(form.get("unitsPerPack")) : null,
           reorderLevel: Number(form.get("reorderLevel")),
           description: form.get("description"),
-          supplierId: Number(form.get("supplierId")),
+          supplierId: form.get("supplierId") ? Number(form.get("supplierId")) : null,
           priceCents: Math.round(price * 100),
           buyingPriceCents: Math.round(buyingPrice * 100),
           stockCount: Number(form.get("stockCount")),

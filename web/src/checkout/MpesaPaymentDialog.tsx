@@ -22,7 +22,8 @@ function MpesaPaymentDialog({
             <p>Enter the customer’s phone number. The sale is saved only after PayAssure accepts the payment.</p>
           </div>
           <button className="modal-close" type="button" aria-label="Close dialog"
-            disabled={isCheckingOut} onClick={onClose}>×</button>
+            disabled={isCheckingOut} title={isCheckingOut ? "M-Pesa payment is being processed." : undefined}
+            onClick={onClose}>×</button>
         </div>
         <form onSubmit={async (event) => {
           event.preventDefault();
@@ -36,9 +37,12 @@ function MpesaPaymentDialog({
           </label>
           <div className="modal-actions">
             <button className="button button-secondary" type="button" disabled={isCheckingOut}
+              title={isCheckingOut ? "M-Pesa payment is being processed." : undefined}
               onClick={onClose}>Cancel</button>
             <button className="button button-primary" type="submit"
-              disabled={isCheckingOut} aria-busy={isCheckingOut}>
+              disabled={isCheckingOut}
+              title={isCheckingOut ? "M-Pesa payment is being processed." : undefined}
+              aria-busy={isCheckingOut}>
               {isCheckingOut
                 ? <><span className="checkout-spinner" aria-hidden="true" />{progressLabel}</>
                 : "Initiate M-Pesa payment"}

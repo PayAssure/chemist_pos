@@ -10,7 +10,7 @@ function matchesSearch(values: string[], query: string) {
 function productMatches(product: Product, query: string) {
   return matchesSearch([
     product.name, product.brand, product.preferredName, product.category, product.dosageForm,
-    product.strength, product.activeIngredient, product.supplierName, product.barcode ?? "",
+    product.strength, product.activeIngredient, product.supplierName ?? "", product.barcode ?? "",
     product.stockCode ?? "", product.saleUnit, product.description, String(product.priceCents / 100),
     product.buyingPriceCents === null ? "" : String(product.buyingPriceCents / 100),
     String(product.stockCount), product.prescriptionRequired ? "prescription rx" : "",

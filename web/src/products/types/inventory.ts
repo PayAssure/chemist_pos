@@ -4,8 +4,8 @@ export type Product = {
   priceCents: number;
   buyingPriceCents: number | null;
   stockCount: number;
-  supplierId: number;
-  supplierName: string;
+  supplierId: number | null;
+  supplierName: string | null;
   merchantId: string | null;
   activeIngredient: string;
   prescriptionRequired: boolean;

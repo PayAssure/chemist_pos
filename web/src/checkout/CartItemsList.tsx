@@ -20,6 +20,7 @@ function CartItemsList({ cartItems, isCheckingOut, onCartChange }: CartItemsList
             <button
               aria-label={`Remove one ${product.name}`}
               disabled={isCheckingOut}
+              title={isCheckingOut ? "A sale is being processed." : undefined}
               onClick={() => onCartChange((current) => {
                 const next = { ...current };
                 if (quantity <= 1) delete next[product.id];
@@ -31,6 +32,9 @@ function CartItemsList({ cartItems, isCheckingOut, onCartChange }: CartItemsList
             <button
               aria-label={`Add one ${product.name}`}
               disabled={isCheckingOut || quantity >= product.saleableCount}
+              title={isCheckingOut
+                ? "A sale is being processed."
+                : quantity >= product.saleableCount ? "No more unexpired stock is available." : undefined}
               onClick={() => onCartChange((current) => ({
                 ...current, [product.id]: quantity + 1,
               }))}

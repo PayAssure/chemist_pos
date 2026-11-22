@@ -82,3 +82,5 @@ CREATE TABLE IF NOT EXISTS payassure_webhook_credentials (
 CREATE INDEX IF NOT EXISTS payassure_settlements_retry_idx
   ON payassure_settlements (next_attempt_at)
   WHERE status IN ('queued', 'failed');
+
+ALTER TABLE products ALTER COLUMN supplier_id DROP NOT NULL;

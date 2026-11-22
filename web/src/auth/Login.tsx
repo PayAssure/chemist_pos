@@ -70,7 +70,8 @@ function Login({ onLogin, onError }: LoginProps) {
             </button>
           </span>
         </label>
-        <button className="button button-primary login-button" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+        <button className="button button-primary login-button" disabled={busy}
+          title={busy ? "Sign-in is in progress." : undefined}>{busy ? "Signing in…" : "Sign in"}</button>
         <p className="helper-text login-note">Accounts are created privately by your administrator.</p>
       </form>
     </main>

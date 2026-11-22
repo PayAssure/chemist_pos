@@ -40,7 +40,13 @@ export default function FloatSummary(props: Props) {
           <button className="button button-secondary" type="button" onClick={onDeposit}>
             Float deposit
           </button>
-          <button className="button button-quiet" type="button" onClick={onCheck} disabled={loading || checking}>
+          <button
+            className="button button-quiet"
+            type="button"
+            onClick={onCheck}
+            disabled={loading || checking}
+            title={loading ? "Float balance is still loading." : checking ? "A balance check is already in progress." : undefined}
+          >
             {checking ? "Checking…" : "Check balance"}
           </button>
         </div>

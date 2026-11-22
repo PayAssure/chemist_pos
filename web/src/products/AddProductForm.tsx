@@ -27,8 +27,8 @@ export function AddProductForm({ suppliers, onSave, onClose }: Props) {
         <label>Units per pack / box<input name="unitsPerPack" type="number" min="1" step="1" placeholder="Optional" /></label>
       </div>
       <label>Supplier
-        <select name="supplierId" required defaultValue="" disabled={suppliers.length === 0}>
-          <option value="" disabled>{suppliers.length ? "Select supplier" : "Add a supplier in Suppliers first"}</option>
+        <select name="supplierId" defaultValue="">
+          <option value="">No supplier (optional)</option>
           <optgroup label="Enrolled in PayAssure">
             {suppliers.filter((supplier) => supplier.payassureEnrolled).map((supplier) => (
               <option key={supplier.id} value={supplier.id}>{supplier.name} · {supplier.merchantId}</option>
@@ -56,7 +56,7 @@ export function AddProductForm({ suppliers, onSave, onClose }: Props) {
       <label>Description<textarea name="description" maxLength={1000} rows={3} placeholder="Optional product notes" /></label>
       <div className="modal-actions">
         <button className="button button-quiet" type="button" onClick={onClose}>Cancel</button>
-        <button className="button button-primary" type="submit" disabled={suppliers.length === 0}>Save medicine</button>
+        <button className="button button-primary" type="submit">Save medicine</button>
       </div>
     </form>
   );
