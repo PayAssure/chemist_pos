@@ -62,7 +62,6 @@
   .checkout-product-search { flex-basis: 100%; width: 100%; }
   .dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .dashboard-metric { min-height: 100px; padding: 12px; }
-  .dashboard-metric strong { font-size: 20px; }
   .dashboard-transaction { flex-direction: column; gap: 8px; }
   .dashboard-transaction-result { align-items: flex-start; }
   .account-dropdown { max-width: calc(100vw - 24px); }

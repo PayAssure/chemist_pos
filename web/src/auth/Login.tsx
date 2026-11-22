@@ -35,7 +35,7 @@ function Login({ onLogin, onError }: LoginProps) {
   return (
     <main className="login-page">
       <form className="login-card" onSubmit={submit}>
-        <div className="brand login-brand"><span className="brand-mark">Z</span><span>Zion Chemist <strong>POS</strong></span></div>
+        <div className="brand login-brand"><span className="brand-mark">A</span><span>Alex Chemist <strong>POS</strong></span></div>
         <p className="eyebrow">PRIVATE SHOP ACCESS</p>
         <h1>Welcome back</h1>
         <p className="subtitle">Sign in with your provisioned account.</p>

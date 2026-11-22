@@ -76,9 +76,9 @@
 .dashboard-period-filter { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; font-weight: 600; }
 .dashboard-period-filter select { min-width: 150px; }
 .dashboard-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
-.dashboard-metric { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; min-height: 116px; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
+.dashboard-metric { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; min-height: 116px; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: #fff; container-type: inline-size; }
 .dashboard-metric span { color: var(--muted); font-size: 14px; font-weight: 600; }
-.dashboard-metric strong { font-size: 26px; font-weight: 800; overflow-wrap: anywhere; }
+.dashboard-metric strong { font-size: clamp(14px, 13.5cqi, 26px); font-weight: 800; white-space: nowrap; }
 .dashboard-metric-failed strong { color: #98352c; }
 .dashboard-disclaimer { margin: -4px 0 0; color: var(--muted); font-size: 13px; }
 .dashboard-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); align-items: stretch; gap: 18px; }

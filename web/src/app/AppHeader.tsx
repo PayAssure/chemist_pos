@@ -11,8 +11,8 @@ export default function AppHeader({ email, tab, signOut }: Props) {
         event.preventDefault();
         navigate(pathForTab("checkout"));
       }}>
-        <span className="brand-mark">Z</span>
-        <span>Zion Chemist <strong>POS</strong></span>
+        <span className="brand-mark">A</span>
+        <span>Alex Chemist <strong>POS</strong></span>
       </a>
       <HeaderNavigation tab={tab} />
       <details className="account-menu">
