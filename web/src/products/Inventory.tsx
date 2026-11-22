@@ -51,7 +51,6 @@ function Inventory(props: InventoryProps) {
           <div className="inventory-actions">
             <button
               className="button button-primary"
-              disabled={!props.suppliers.length}
               onClick={() => navigate("/product/add")}
             >
               Add product

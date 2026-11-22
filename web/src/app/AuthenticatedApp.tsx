@@ -46,7 +46,7 @@ export default function AuthenticatedApp({ email, setEmail, notifications }: Pro
       <ToastViewport error={error} notice={notice} onDismiss={dismiss} />
       <AppHeader email={email} tab={tab} signOut={() => void signOut()} />
       <main className="main">
-        <Welcome floating={floating} deposit={deposit} profile={profile.profile} />
+        <Welcome floating={floating} deposit={deposit} />
         <AppPages tab={tab} data={data} cart={cart} profile={profile} checkout={checkout} actions={actions} />
       </main>
       <FloatDepositDialog deposit={deposit} />

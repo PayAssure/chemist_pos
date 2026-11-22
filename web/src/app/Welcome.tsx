@@ -1,15 +1,13 @@
 import FloatSummary from "./FloatSummary";
 import type { useRetailerFloat } from "./useRetailerFloat";
 import type { useFloatDeposit } from "./useFloatDeposit";
-import type { RetailerProfileData } from "../types";
 
 type Props = {
   floating: ReturnType<typeof useRetailerFloat>;
   deposit: ReturnType<typeof useFloatDeposit>;
-  profile: RetailerProfileData;
 };
 
-export default function Welcome({ floating, deposit, profile }: Props) {
+export default function Welcome({ floating, deposit }: Props) {
   return (
     <div className="welcome">
       <div>
@@ -25,7 +23,6 @@ export default function Welcome({ floating, deposit, profile }: Props) {
           loading={floating.loading}
           error={floating.error}
           checkedAt={floating.checkedAt}
-          canDeposit={profile.integration?.isActive === true && !deposit.loading && !deposit.pendingDeposit}
           checking={floating.checking}
           onDeposit={() => { deposit.setError(""); deposit.setOpen(true); }}
           onCheck={() => void floating.checkBalance()}

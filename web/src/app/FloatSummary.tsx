@@ -12,14 +12,13 @@ type Props = {
   loading: boolean;
   error: string;
   checkedAt: string;
-  canDeposit: boolean;
   checking: boolean;
   onDeposit: () => void;
   onCheck: () => void;
 };
 
 export default function FloatSummary(props: Props) {
-  const { data, balance, liveBalance, loading, error, checkedAt, canDeposit, checking, onDeposit, onCheck } = props;
+  const { data, balance, liveBalance, loading, error, checkedAt, checking, onDeposit, onCheck } = props;
   const currency = liveBalance?.currency ?? balance?.currency ?? data?.currency ?? "KES";
   const dailyFloat = balance?.dailyFloat ?? data?.dailyFloat;
   return (
@@ -38,7 +37,7 @@ export default function FloatSummary(props: Props) {
       </div>
       <div className="float-summary-action-group">
         <div className="float-summary-actions">
-          <button className="button button-secondary" type="button" onClick={onDeposit} disabled={!canDeposit}>
+          <button className="button button-secondary" type="button" onClick={onDeposit}>
             Float deposit
           </button>
           <button className="button button-quiet" type="button" onClick={onCheck} disabled={loading || checking}>
