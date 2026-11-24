@@ -74,9 +74,34 @@ export { app };
 
 if (require.main === module) {
   ensureDatabaseInitialized()
-    .then(() => { app.listen(port, () => console.log("POS server listening on port " + port)); })
-    .catch((error: unknown) => {
+    .then(() => {
+      const server = app.listen(port, "0.0.0.0", () => {
+        console.log("POS server listening on port " + port);
+      });
+      const shutdown = (signal: string) => {
+        console.log(`Received ${signal}; shutting down POS server`);
+        server.close((error) => {
+          if (error) {
+            console.error("Could not close the POS HTTP server cleanly:", error);
+            process.exitCode = 1;
+          }
+          pool.end()
+            .catch((poolError: unknown) => {
+              console.error("Could not close the database pool cleanly:", poolError);
+              process.exitCode = 1;
+            });
+        });
+      };
+      process.once("SIGTERM", () => shutdown("SIGTERM"));
+      process.once("SIGINT", () => shutdown("SIGINT"));
+    })
+    .catch(async (error: unknown) => {
       console.error("Could not initialize the database:", error);
+      try {
+        await pool.end();
+      } catch (poolError) {
+        console.error("Could not close the database pool after startup failure:", poolError);
+      }
       process.exitCode = 1;
     });
 }

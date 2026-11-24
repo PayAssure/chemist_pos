@@ -69,5 +69,3 @@ ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check
   CHECK (payment_method IN ('cash', 'mpesa', 'credit'));
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS payer_name TEXT;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS payer_phone TEXT;
-ALTER TABLE sales DROP COLUMN IF EXISTS prescription_reference;
-ALTER TABLE sales DROP COLUMN IF EXISTS prescription_checked_by;

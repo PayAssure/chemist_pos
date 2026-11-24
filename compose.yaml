@@ -1,0 +1,69 @@
+name: payassure-pos
+
+services:
+  app:
+    build:
+      context: .
+    image: payassure-pos:latest
+    container_name: payassure-pos
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgresql://${POS_POSTGRES_USER:-payassure_pos}:${POS_POSTGRES_PASSWORD:?Set POS_POSTGRES_PASSWORD in .env}@db:5432/${POS_POSTGRES_DB:-payassure_pos}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+      PAYASSURE_API_BASE_URL: ${PAYASSURE_API_BASE_URL:-}
+      PAYASSURE_IDENTIFIER: ${PAYASSURE_IDENTIFIER:-}
+      PAYASSURE_PASSWORD: ${PAYASSURE_PASSWORD:-}
+      PAYASSURE_WEBHOOK_URL: ${PAYASSURE_WEBHOOK_URL:-}
+      PAYASSURE_DEBUG: ${PAYASSURE_DEBUG:-false}
+      SESSION_DIAGNOSTICS: ${SESSION_DIAGNOSTICS:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3010:3000"
+    networks:
+      - pos-network
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  db:
+    image: postgres:16-alpine
+    container_name: payassure-pos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POS_POSTGRES_DB:-payassure_pos}
+      POSTGRES_USER: ${POS_POSTGRES_USER:-payassure_pos}
+      POSTGRES_PASSWORD: ${POS_POSTGRES_PASSWORD:?Set POS_POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - pos-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres-data:
+    name: payassure_pos_postgres_data
+
+networks:
+  pos-network:
+    name: payassure-pos-network
+    driver: bridge

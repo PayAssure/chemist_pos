@@ -19,6 +19,117 @@ npm run dev
 
 The API applies the schema and additive pharmacy migrations on startup. The web UI is available at `http://localhost:5173`; the API uses the `PORT` value from `.env` (default `3000`), and the web development proxy forwards `/api` requests to that port.
 
+## Docker deployment
+
+The POS uses its own Compose project, bridge network, PostgreSQL 16 database (`payassure_pos`), and persistent volume (`payassure_pos_postgres_data`). Its app is published only on `127.0.0.1:3010`; the Settlement Engine's port 3000 and deployment are separate and are not changed by these commands.
+
+### Production environment
+
+The Compose stack reads `.env` from the repository root. For a new deployment only, create it from `.env.example`, replace the placeholders with unique secrets without printing them, and restrict file access:
+
+```sh
+umask 077
+cp .env.example .env
+python3 - <<'PY'
+from pathlib import Path
+import secrets
+
+path = Path(".env")
+content = path.read_text()
+content = content.replace(
+    "replace-with-a-random-64-character-hex-password", secrets.token_hex(32)
+).replace(
+    "replace-with-a-random-64-character-hex-secret", secrets.token_hex(32)
+)
+path.write_text(content)
+path.chmod(0o600)
+PY
+```
+
+For an existing deployment, preserve its `.env` and add only any missing POS variables; do not overwrite existing integration credentials or `SESSION_SECRET`. Keep `SESSION_SECRET` stable across restarts because it signs sessions and encrypts stored PayAssure tokens. Do not copy the Settlement Engine's database URL or credentials into the POS configuration. The existing `DATABASE_URL` in a developer `.env` is not passed to the container; Compose constructs the container URL using the dedicated POS database credentials and hostname `db`.
+
+Runtime environment variables:
+
+| Variable | Requirement | Purpose |
+|---|---|---|
+| `POS_POSTGRES_DB` | Required; `payassure_pos` | Dedicated POS database name |
+| `POS_POSTGRES_USER` | Required; `payassure_pos` | Dedicated POS database user |
+| `POS_POSTGRES_PASSWORD` | Required; random strong secret | POS database password |
+| `SESSION_SECRET` | Required; random, at least 32 characters | Session signing and PayAssure token encryption |
+| `PAYASSURE_API_BASE_URL` | Optional integration | PayAssure API base URL |
+| `PAYASSURE_IDENTIFIER` | Optional integration | PayAssure retailer identifier |
+| `PAYASSURE_PASSWORD` | Optional integration | PayAssure retailer credential |
+| `PAYASSURE_WEBHOOK_URL` | Optional until payment checkout is used | Public HTTPS callback URL ending in `/webhook` |
+| `PAYASSURE_DEBUG` | Optional; defaults to `false` | Temporary PayAssure diagnostics |
+| `SESSION_DIAGNOSTICS` | Optional; defaults to `false` | Temporary session diagnostics |
+
+Set all three PayAssure API credentials to enable the integration. In production, configure `PAYASSURE_WEBHOOK_URL` with the public HTTPS address and put Nginx/TLS in front of this app. Keep `.env` private; it is ignored by Git and excluded from the Docker build context.
+
+### Deploy and verify
+
+Run these commands from the POS repository on the Ubuntu VPS. They name only the `payassure-pos` Compose project and do not stop, rebuild, or recreate the Settlement Engine:
+
+```sh
+# Check the existing Settlement Engine before deployment (HTTP reachability).
+curl --silent --show-error --output /dev/null --write-out 'Settlement Engine HTTP %{http_code}\n' http://127.0.0.1:3000/
+
+# Validate configuration, build the POS image, and start only its database.
+docker compose config --quiet
+docker compose build app
+docker compose up -d --wait db
+docker compose ps db
+
+# If migrating existing POS data, do that now before starting the app.
+# The destination volume must still be empty; see "Existing POS data and schema updates".
+
+# Start the app. It waits for PostgreSQL health, applies the SQL schema, and
+# only then opens its HTTP listener.
+docker compose up -d --wait app
+docker compose ps
+curl --fail --show-error http://127.0.0.1:3010/api/health
+
+# Confirm the database identity and that the app is configured for the POS DB.
+docker compose exec -T db psql -U payassure_pos -d payassure_pos -Atqc 'SELECT current_database(), current_user'
+docker compose exec -T app node -e 'const db = new URL(process.env.DATABASE_URL); if (db.hostname !== "db" || db.pathname !== "/payassure_pos") process.exit(1); console.log("POS app uses its dedicated Compose database")'
+
+# Confirm the Settlement Engine still answers on its original host port.
+curl --silent --show-error --output /dev/null --write-out 'Settlement Engine HTTP %{http_code}\n' http://127.0.0.1:3000/
+```
+
+Use the Settlement Engine's known health URL instead of `/` if it has one. Nginx should proxy to `http://127.0.0.1:3010`. PostgreSQL has no published host port and is reachable only over `payassure-pos-network`. The app uses `init: true`, runs as the non-root Node user, and handles `SIGTERM` for graceful shutdown.
+
+### Existing POS data and schema updates
+
+The project uses the `pg` PostgreSQL driver and ordered SQL schema files in `server/schema/`, not Prisma or another ORM. On every app startup, the existing `initializeDatabase()` process applies these schema files before listening. They include conditional table/column/index creation, constraint updates, and guarded data backfills; there is no separate production migration command. The obsolete prescription columns are retained to avoid deleting legacy data. Seeding is not run automatically.
+
+If existing POS records need to be copied into the new dedicated database, first verify that the source is the POS database and is not the Settlement Engine database. Set `SOURCE_DATABASE_URL` in `.env` only after that verification, then run:
+
+```sh
+node scripts/migrate-database-to-compose.mjs
+```
+
+This one-time, read-only source dump restores into the new POS volume and refuses to restore over an initialized destination. It requires `pg_dump` on the host at the same or a newer major version than the source PostgreSQL server. Do not run this against the Settlement Engine database. Keep a tested backup of the source and verify POS records after import.
+
+Normal redeployment:
+
+```sh
+docker compose config --quiet
+docker compose up -d --build --wait
+docker compose ps
+curl --fail --show-error http://127.0.0.1:3010/api/health
+```
+
+`docker compose down` stops only this POS project and preserves its data. Never use `docker compose down -v` for routine deployment; it deletes the POS database volume.
+
+Provision a private staff account after the app is healthy:
+
+```sh
+docker compose run --rm \
+  -e POS_USER_EMAIL=staff@example.com \
+  -e POS_USER_PASSWORD='use-a-long-unique-password' \
+  app node dist/server/src/create-user.js
+```
+
 ## Netlify deployment
 
 The Netlify configuration builds the frontend and server with `npm run build`, publishes `web/dist`, and serves the Express API and `/webhook` through a Netlify Function. Configure the required server environment variables (`DATABASE_URL`, `SESSION_SECRET`, and any PayAssure settings) in the Netlify site settings; do not commit `.env`.

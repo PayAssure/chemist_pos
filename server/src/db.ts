@@ -2,11 +2,14 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL must be configured");
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl && !process.env.PGHOST) {
+  throw new Error("DATABASE_URL or PGHOST must be configured");
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+export const pool = databaseUrl
+  ? new Pool({ connectionString: databaseUrl })
+  : new Pool();
 
 export async function initializeDatabase(): Promise<void> {
   const schemaDirectory = process.env.NETLIFY
